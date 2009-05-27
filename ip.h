@@ -37,6 +37,8 @@
 #ifndef _IP_H_
 #define _IP_H_
 
+#include "socket.h"
+
 #ifdef WORDS_BIGENDIAN
 # ifndef NTOHL
 #  define NTOHL(d)
@@ -293,5 +295,15 @@ extern struct	ipstat	ipstat;
 
 extern struct	ipq	ipq;			/* ip reass. queue */
 extern u_int16_t	ip_id;				/* ip packet ctr, for ids */
+
+/* ip_input.c */
+void ip_init();
+void ip_input(struct mbuf *);
+void ip_slowtimo ();
+void ip_stripoptions (register struct mbuf *, struct mbuf *);
+
+/* ip_output.c */
+int ip_output(struct socket *, struct mbuf *);
+
 
 #endif

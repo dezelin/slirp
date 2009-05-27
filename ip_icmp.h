@@ -36,7 +36,7 @@
 
 #ifndef _NETINET_IP_ICMP_H_
 #define _NETINET_IP_ICMP_H_
-
+#include "ip.h" 
 /*
  * Interface Control Message Protocol Definitions.
  * Per RFC 792, September 1981.
@@ -156,10 +156,13 @@ struct icmp {
 	(type) == ICMP_TSTAMP || (type) == ICMP_TSTAMPREPLY || \
 	(type) == ICMP_IREQ || (type) == ICMP_IREQREPLY || \
 	(type) == ICMP_MASKREQ || (type) == ICMP_MASKREPLY)
-
+ 
+#if 0 // TODO: temp till udp is supported
 void icmp_input _P((struct mbuf *, int));
+void icmp_reflect _P((struct mbuf *));
+#endif
+
 void icmp_error(struct mbuf *msrc, u_char type, u_char code, int minsize,
                 const char *message);
-void icmp_reflect _P((struct mbuf *));
 
 #endif

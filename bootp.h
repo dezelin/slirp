@@ -1,3 +1,9 @@
+#ifndef _BOOTP_H
+#define _BOOTP_H
+
+#include "ip.h" 
+#include "udp.h" 
+
 /* bootp/dhcp defines */
 
 #define BOOTP_SERVER	67
@@ -71,6 +77,7 @@
 #define DHCPOFFER		2
 #define DHCPREQUEST		3
 #define DHCPACK			5
+#define DHCPNACK		6
 
 #define RFC1533_VENDOR_MAJOR	0
 #define RFC1533_VENDOR_MINOR	0
@@ -111,3 +118,9 @@ struct bootp_t {
 };
 
 void bootp_input(struct mbuf *m);
+
+int alloc_virtual_ip(struct in_addr *out_addr);
+int is_virtual_ip_allocated(struct in_addr *addr); 
+void clear_virtual_ips();
+
+#endif

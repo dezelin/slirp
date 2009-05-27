@@ -10,6 +10,9 @@
 #ifndef _SLIRP_SOCKET_H_
 #define _SLIRP_SOCKET_H_
 
+#include "sbuf.h"
+#include "mbuf.h"
+
 #define SO_EXPIRE 240000
 #define SO_EXPIREFAST 10000
 
@@ -19,9 +22,8 @@
 
 struct socket {
   struct socket *so_next,*so_prev;      /* For a linked list of sockets */
-
-  int s;                           /* The actual socket */
-
+  void *usr_so;
+  
 			/* XXX union these with not-yet-used sbuf params */
   struct mbuf *so_m;	           /* Pointer to the original SYN packet,
 				    * for non-blocking connect()'s, and
@@ -73,6 +75,7 @@ struct socket {
 
 extern struct socket tcb;
 
+
 struct socket * solookup _P((struct socket *, struct in_addr, u_int, struct in_addr, u_int));
 struct socket * socreate _P((void));
 void sofree _P((struct socket *));
@@ -80,14 +83,24 @@ int soread _P((struct socket *));
 void sorecvoob _P((struct socket *));
 int sosendoob _P((struct socket *));
 int sowrite _P((struct socket *));
-void sorecvfrom _P((struct socket *));
-int sosendto _P((struct socket *, struct mbuf *));
-struct socket * solisten _P((u_int, u_int32_t, u_int, int));
+
+
+void sotrysend _P((struct socket *)); 
+int sotryrecv _P((struct socket *)); 
+void sodropacked _P((struct socket *, int));
+
 void soisfconnecting _P((register struct socket *));
 void soisfconnected _P((register struct socket *));
 void soisfdisconnected _P((struct socket *));
 void sofwdrain _P((struct socket *));
 size_t sopreprbuf(struct socket *so, struct iovec *iov, int *np);
-int soreadbuf(struct socket *so, const char *buf, int size);
 
+void sosbappend _P((struct socket *, struct mbuf *)); 
+
+#if 0 // UDP and socket listen
+int soreadbuf(struct socket *so, const char *buf, int size);
+void sorecvfrom _P((struct socket *));
+int sosendto _P((struct socket *, struct mbuf *));
+struct socket * solisten _P((u_int, u_int32_t, u_int, int));
+#endif
 #endif /* _SOCKET_H_ */

@@ -42,9 +42,13 @@
  * terms and conditions of the copyright.
  */
 
-#include <slirp.h>
-#include <osdep.h>
+
+#include "slirp_common.h"
+#include "ip.h"
 #include "ip_icmp.h"
+#include "udp.h"
+#include "tcp.h"
+#include "cksum.h"
 
 #ifdef LOG_ENABLED
 struct ipstat ipstat;
@@ -138,25 +142,6 @@ ip_input(m)
 		goto bad;
 	}
 
-    if (slirp_restrict) {
-        if (memcmp(&ip->ip_dst.s_addr, &special_addr, 3)) {
-            if (ip->ip_dst.s_addr == 0xffffffff && ip->ip_p != IPPROTO_UDP)
-                goto bad;
-        } else {
-            int host = ntohl(ip->ip_dst.s_addr) & 0xff;
-            struct ex_list *ex_ptr;
-
-            if (host == 0xff)
-                goto bad;
-
-            for (ex_ptr = exec_list; ex_ptr; ex_ptr = ex_ptr->ex_next)
-                if (ex_ptr->ex_addr == host)
-                    break;
-
-            if (!ex_ptr)
-                goto bad;
-        }
-    }
 
 	/* Should drop packet if mbuf too long? hmmm... */
 	if (m->m_len > ip->ip_len)
@@ -249,9 +234,12 @@ ip_input(m)
 		udp_input(m, hlen);
 		break;
 	 case IPPROTO_ICMP:
-		icmp_input(m, hlen);
+		//icmp_input(m, hlen);
+        printf("ip_input : ICMP not supported yet\n"); // TODO: temp
+        return;
 		break;
 	 default:
+        printf("ip_input : IPPROTO %d not supported", ip->ip_p); // TODO: temp
 		STAT(ipstat.ips_noproto++);
 		m_free(m);
 	}

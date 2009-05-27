@@ -37,6 +37,7 @@
 #ifndef _TCPIP_H_
 #define _TCPIP_H_
 
+#include "ip.h"
 /*
  * Tcp+ip header, after ip options removed.
  */

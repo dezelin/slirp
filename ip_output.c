@@ -42,7 +42,10 @@
  * terms and conditions of the copyright.
  */
 
-#include <slirp.h>
+#include "slirp_common.h"
+#include "ip.h"
+#include "if.h"
+#include "cksum.h"
 
 u_int16_t ip_id;
 

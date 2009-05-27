@@ -1,7 +1,6 @@
-#ifndef __COMMON_H__
-#define __COMMON_H__
+#ifndef __SLIRP_COMMON_H__
+#define __SLIRP_COMMON_H__
 
-#define CONFIG_QEMU
 
 //#define DEBUG 1
 
@@ -14,14 +13,10 @@
 #define STAT(expr) do { } while(0)
 #endif
 
-#ifndef CONFIG_QEMU
-#include "version.h"
-#endif
-#include "config-host.h"
 #include "slirp_config.h"
 
 #ifdef _WIN32
-# include <inttypes.h>
+#include <inttypes.h>
 
 typedef uint8_t u_int8_t;
 typedef uint16_t u_int16_t;
@@ -201,36 +196,6 @@ int inet_aton _P((const char *cp, struct in_addr *ia));
 #include <sys/stropts.h>
 #endif
 
-#include "debug.h"
-
-#include "ip.h"
-#include "tcp.h"
-#include "tcp_timer.h"
-#include "tcp_var.h"
-#include "tcpip.h"
-#include "udp.h"
-#include "icmp_var.h"
-#include "mbuf.h"
-#include "sbuf.h"
-#include "socket.h"
-#include "if.h"
-#include "main.h"
-#include "misc.h"
-#include "ctl.h"
-#ifdef USE_PPP
-#include "ppp/pppd.h"
-#include "ppp/ppp.h"
-#endif
-
-#include "bootp.h"
-#include "tftp.h"
-#include "libslirp.h"
-
-extern struct ttys *ttys_unit[MAX_INTERFACES];
-
-#ifndef NULL
-#define NULL (void *)0
-#endif
 
 #ifndef FULL_BOLT
 void if_start _P((void));
@@ -275,44 +240,7 @@ void lprint _P((const char *, ...));
 #define SO_OPTIONS DO_KEEPALIVE
 #define TCP_MAXIDLE (TCPTV_KEEPCNT * TCPTV_KEEPINTVL)
 
-/* cksum.c */
-int cksum(struct mbuf *m, int len);
 
-/* if.c */
-void if_init _P((void));
-void if_output _P((struct socket *, struct mbuf *));
-
-/* ip_input.c */
-void ip_init _P((void));
-void ip_input _P((struct mbuf *));
-void ip_slowtimo _P((void));
-void ip_stripoptions _P((register struct mbuf *, struct mbuf *));
-
-/* ip_output.c */
-int ip_output _P((struct socket *, struct mbuf *));
-
-/* tcp_input.c */
-void tcp_input _P((register struct mbuf *, int, struct socket *));
-int tcp_mss _P((register struct tcpcb *, u_int));
-
-/* tcp_output.c */
-int tcp_output _P((register struct tcpcb *));
-void tcp_setpersist _P((register struct tcpcb *));
-
-/* tcp_subr.c */
-void tcp_init _P((void));
-void tcp_template _P((struct tcpcb *));
-void tcp_respond _P((struct tcpcb *, register struct tcpiphdr *, register struct mbuf *, tcp_seq, tcp_seq, int));
-struct tcpcb * tcp_newtcpcb _P((struct socket *));
-struct tcpcb * tcp_close _P((register struct tcpcb *));
-void tcp_sockclosed _P((struct tcpcb *));
-int tcp_fconnect _P((struct socket *));
-void tcp_connect _P((struct socket *));
-int tcp_attach _P((struct socket *));
-u_int8_t tcp_tos _P((struct socket *));
-int tcp_emu _P((struct socket *, struct mbuf *));
-int tcp_ctl _P((struct socket *));
-struct tcpcb *tcp_drop(struct tcpcb *tp, int err);
 
 #ifdef USE_PPP
 #define MIN_MRU MINMRU
@@ -332,4 +260,84 @@ struct tcpcb *tcp_drop(struct tcpcb *tp, int err);
 #define errno (WSAGetLastError())
 #endif
 
+#include "net_slirp.h"
+#include "debug.h"
+#include "misc.h"
+#include "ctl.h"
+
+
+extern struct ttys *ttys_unit[MAX_INTERFACES];
+
+#ifndef NULL
+#define NULL (void *)0
 #endif
+
+#define FALSE 0
+#define TRUE  1
+
+
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#endif
+
+#define TOWRITEMAX 512
+
+extern struct timeval tt;
+extern int link_up;
+extern int slirp_socket;
+extern int slirp_socket_unit;
+extern int slirp_socket_port;
+extern u_int32_t slirp_socket_addr;
+extern char *slirp_socket_passwd;
+extern int ctty_closed;
+
+/*
+ * Get the difference in 2 times from updtim()
+ * Allow for wraparound times, "just in case"
+ * x is the greater of the 2 (current time) and y is
+ * what it's being compared against.
+ */
+#define TIME_DIFF(x,y) (x)-(y) < 0 ? ~0-(y)+(x) : (x)-(y)
+
+
+#ifndef offsetof
+#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *) 0)->MEMBER)
+#endif
+#ifndef container_of
+#define container_of(ptr, type, member) ({                      \
+        const typeof(((type *) 0)->member) *__mptr = (ptr);     \
+        (type *) ((char *) __mptr - offsetof(type, member));})
+#endif
+
+
+extern char *slirp_tty;
+extern char *exec_shell;
+extern u_int curtime;
+extern fd_set *global_readfds, *global_writefds, *global_xfds;
+extern struct in_addr ctl_addr;
+extern struct in_addr special_addr;
+extern struct in_addr alias_addr;
+extern struct in_addr our_addr;
+extern struct in_addr loopback_addr;
+extern struct in_addr dns_addr;
+extern char *username;
+extern char *socket_path;
+extern int towrite_max;
+extern int ppp_exit;
+extern int tcp_keepintvl;
+extern uint8_t client_ethaddr[6];
+extern char slirp_hostname[33];
+extern const char *slirp_special_ip;
+
+#define PROTO_SLIP 0x1
+#ifdef USE_PPP
+#define PROTO_PPP 0x2
+#endif
+
+extern const uint8_t zero_ethaddr[6];
+extern const uint8_t special_ethaddr[6];
+extern struct in_addr client_ipaddr;
+
+extern SlirpUsrNetworkInterface *slirp_net_interface;
+#endif
+

@@ -1,0 +1,5 @@
+- debug and stats support
+- udp support
+- make DHCP gateway support optional
+- redir
+- return windows compatibility

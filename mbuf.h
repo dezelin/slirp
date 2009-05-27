@@ -37,6 +37,8 @@
 #ifndef _MBUF_H_
 #define _MBUF_H_
 
+#include "slirp_common.h" 
+
 #define m_freem m_free
 
 
@@ -131,7 +133,6 @@ struct mbstat {
 
 extern struct	mbstat mbstat;
 extern int mbuf_alloced;
-extern struct mbuf m_freelist, m_usedlist;
 extern int mbuf_max;
 
 void m_init _P((void));

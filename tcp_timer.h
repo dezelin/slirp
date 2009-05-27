@@ -84,6 +84,8 @@
  * amount of time probing, then we drop the connection.
  */
 
+#define SLOW_TIMEOUT_MS 1000/PR_SLOWHZ
+#define FAST_TIMEOUT_MS 1000/PR_FASTHZ
 /*
  * Time constants.
  */

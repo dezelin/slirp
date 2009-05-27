@@ -15,8 +15,9 @@
  * the flags
  */
 
-#include <slirp.h>
-
+#include "mbuf.h"
+#include "slirp_common.h"
+#include "if.h" 
 int mbuf_alloced = 0;
 struct mbuf m_freelist, m_usedlist;
 #define MBUF_THRESH 30
@@ -74,6 +75,7 @@ m_get()
 	m->m_len = 0;
 	m->m_nextpkt = 0;
 	m->m_prevpkt = 0;
+
 end_error:
 	DEBUG_ARG("m = %lx", (long )m);
 	return m;
@@ -107,6 +109,7 @@ m_free(m)
 		m->m_flags = M_FREELIST; /* Clobber other flags */
 	}
   } /* if(m) */
+
 }
 
 /*
@@ -140,30 +143,30 @@ m_inc(m, size)
 	int datasize;
 
 	/* some compiles throw up on gotos.  This one we can fake. */
-        if(m->m_size>size) return;
+    if(m->m_size>size) return;
 
-        if (m->m_flags & M_EXT) {
-	  datasize = m->m_data - m->m_ext;
-	  m->m_ext = (char *)realloc(m->m_ext,size);
+    if (m->m_flags & M_EXT) {
+	    datasize = m->m_data - m->m_ext;
+	    m->m_ext = (char *)realloc(m->m_ext,size);
 /*		if (m->m_ext == NULL)
  *			return (struct mbuf *)NULL;
  */
-	  m->m_data = m->m_ext + datasize;
-        } else {
-	  char *dat;
-	  datasize = m->m_data - m->m_dat;
-	  dat = (char *)malloc(size);
+	    m->m_data = m->m_ext + datasize;
+    } else {
+	    char *dat;
+	    datasize = m->m_data - m->m_dat;
+	    dat = (char *)malloc(size);
 /*		if (dat == NULL)
  *			return (struct mbuf *)NULL;
  */
-	  memcpy(dat, m->m_dat, m->m_size);
+	    memcpy(dat, m->m_dat, m->m_size);
 
-	  m->m_ext = dat;
-	  m->m_data = m->m_ext + datasize;
-	  m->m_flags |= M_EXT;
-        }
+	    m->m_ext = dat;
+	    m->m_data = m->m_ext + datasize;
+	    m->m_flags |= M_EXT;
+    }
 
-        m->m_size = size;
+    m->m_size = size;
 
 }
 

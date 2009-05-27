@@ -42,8 +42,18 @@
  * terms and conditions of the copyright.
  */
 
-#include <slirp.h>
+#include "tcp.h"
+#include "tcpip.h"
+#include "ip.h"
+#include "if.h"
+#include "slirp_common.h"
 #include "ip_icmp.h"
+#include "sbuf.h"
+#include "cksum.h"
+#include "tcp_timer.h"
+#include "misc.h"
+#include "mbuf.h"
+#include "socket.h"
 
 struct socket tcb;
 
@@ -82,9 +92,9 @@ tcp_seq tcp_iss;                /* tcp initial send seq # */
                STAT(tcpstat.tcps_rcvpack++);         \
                STAT(tcpstat.tcps_rcvbyte += (ti)->ti_len);   \
                if (so->so_emu) { \
-		       if (tcp_emu((so),(m))) sbappend((so), (m)); \
+		       if (tcp_emu((so),(m))) sosbappend((so), (m)); \
 	       } else \
-	       	       sbappend((so), (m)); \
+	       	       sosbappend((so), (m)); \
 /*               sorwakeup(so); */ \
 	} else {\
                (flags) = tcp_reass((tp), (ti), (m)); \
@@ -102,9 +112,9 @@ tcp_seq tcp_iss;                /* tcp initial send seq # */
 		STAT(tcpstat.tcps_rcvpack++);        \
 		STAT(tcpstat.tcps_rcvbyte += (ti)->ti_len);  \
 		if (so->so_emu) { \
-			if (tcp_emu((so),(m))) sbappend(so, (m)); \
+			if (tcp_emu((so),(m))) sosbappend(so, (m)); \
 		} else \
-			sbappend((so), (m)); \
+			sosbappend((so), (m)); \
 /*		sorwakeup(so); */ \
 	} else { \
 		(flags) = tcp_reass((tp), (ti), (m)); \
@@ -112,6 +122,7 @@ tcp_seq tcp_iss;                /* tcp initial send seq # */
 	} \
 }
 #endif
+
 static void tcp_dooptions(struct tcpcb *tp, u_char *cp, int cnt,
                           struct tcpiphdr *ti);
 static void tcp_xmit_timer(register struct tcpcb *tp, int rtt);
@@ -220,24 +231,43 @@ present:
 			m_freem(m);
 		else {
 			if (so->so_emu) {
-				if (tcp_emu(so,m)) sbappend(so, m);
+				if (tcp_emu(so,m)) sosbappend(so, m);
 			} else
-				sbappend(so, m);
+				sosbappend(so, m);
 		}
 	} while (ti != (struct tcpiphdr *)tp && ti->ti_seq == tp->rcv_nxt);
 /*	sorwakeup(so); */
 	return (flags);
 }
 
-/*
- * TCP input routine, follows pages 65-76 of the
- * protocol specification dated September, 1981 very closely.
- */
-void
-tcp_input(m, iphlen, inso)
+static void
+tcp_input1(register struct mbuf *m, int iphlen, struct socket *inso, 
+           int *drop_acked, struct socket **outso);
+
+void tcp_input(m, iphlen, inso)
 	register struct mbuf *m;
 	int iphlen;
 	struct socket *inso;
+{
+    int drop_acked = 0;
+    struct socket *so = NULL;
+    tcp_input1(m, iphlen, inso, &drop_acked, &so);
+    if (drop_acked && so) {
+        sotryrecv(so); 
+    }
+}
+/*
+ * TCP input routine, follows pages 65-76 of the
+ * protocol specification dated September, 1981 very closely.
+ * outso is valid only when drop_acked is true
+ */
+static void
+tcp_input1(m, iphlen, inso, drop_acked, outso)
+	register struct mbuf *m;
+	int iphlen;
+	struct socket *inso;
+    int *drop_acked;
+    struct socket **outso;
 {
   	struct ip save_ip, *ip;
 	register struct tcpiphdr *ti;
@@ -253,7 +283,7 @@ tcp_input(m, iphlen, inso)
 	u_long tiwin;
 	int ret;
 /*	int ts_present = 0; */
-    struct ex_list *ex_ptr;
+    *drop_acked = 0;
 
 	DEBUG_CALL("tcp_input");
 	DEBUG_ARGS((dfd," m = %8lx  iphlen = %2d  inso = %lx\n",
@@ -365,15 +395,7 @@ tcp_input(m, iphlen, inso)
 	m->m_data += sizeof(struct tcpiphdr)+off-sizeof(struct tcphdr);
 	m->m_len  -= sizeof(struct tcpiphdr)+off-sizeof(struct tcphdr);
 
-    if (slirp_restrict) {
-        for (ex_ptr = exec_list; ex_ptr; ex_ptr = ex_ptr->ex_next)
-            if (ex_ptr->ex_fport == ti->ti_dport &&
-                    (ntohl(ti->ti_dst.s_addr) & 0xff) == ex_ptr->ex_addr)
-                break;
 
-        if (!ex_ptr)
-            goto drop;
-    }
 	/*
 	 * Locate pcb for segment.
 	 */
@@ -525,7 +547,11 @@ findso:
 				acked = ti->ti_ack - tp->snd_una;
 				STAT(tcpstat.tcps_rcvackpack++);
 				STAT(tcpstat.tcps_rcvackbyte += acked);
-				sbdrop(&so->so_snd, acked);
+
+                sodropacked(so, acked);
+                *drop_acked = 1;
+                *outso = so;
+                
 				tp->snd_una = ti->ti_ack;
 				m_freem(m);
 
@@ -576,9 +602,9 @@ findso:
 			 * Add data to socket buffer.
 			 */
 			if (so->so_emu) {
-				if (tcp_emu(so,m)) sbappend(so, m);
+				if (tcp_emu(so,m)) sosbappend(so, m);
 			} else
-				sbappend(so, m);
+				sosbappend(so, m);
 
 			/*
 			 * XXX This is called when data arrives.  Later, check
@@ -646,34 +672,12 @@ findso:
 	   * If this is destined for the control address, then flag to
 	   * tcp_ctl once connected, otherwise connect
 	   */
-	  if ((so->so_faddr.s_addr&htonl(0xffffff00)) == special_addr.s_addr) {
-	    int lastbyte=ntohl(so->so_faddr.s_addr) & 0xff;
-	    if (lastbyte!=CTL_ALIAS && lastbyte!=CTL_DNS) {
-#if 0
-	      if(lastbyte==CTL_CMD || lastbyte==CTL_EXEC) {
-		/* Command or exec adress */
-		so->so_state |= SS_CTL;
-	      } else
-#endif
-              {
-		/* May be an add exec */
-		for(ex_ptr = exec_list; ex_ptr; ex_ptr = ex_ptr->ex_next) {
-		  if(ex_ptr->ex_fport == so->so_fport &&
-		     lastbyte == ex_ptr->ex_addr) {
-		    so->so_state |= SS_CTL;
-		    break;
-		  }
-		}
-	      }
-	      if(so->so_state & SS_CTL) goto cont_input;
-	    }
-	    /* CTL_ALIAS: Do nothing, tcp_fconnect will be called on it */
-	  }
 
 	  if (so->so_emu & EMU_NOCONNECT) {
 	    so->so_emu &= ~EMU_NOCONNECT;
 	    goto cont_input;
 	  }
+
 
 	  if((tcp_fconnect(so) == -1) && (errno != EINPROGRESS) && (errno != EWOULDBLOCK)) {
 	    u_char code=ICMP_UNREACH_NET;
@@ -683,6 +687,7 @@ findso:
 	      /* ACK the SYN, send RST to refuse the connection */
 	      tcp_respond(tp, ti, m, ti->ti_seq+1, (tcp_seq)0,
 			  TH_RST|TH_ACK);
+          tp = tcp_close(tp); 
 	    } else {
 	      if(errno == EHOSTUNREACH) code=ICMP_UNREACH_HOST;
 	      HTONL(ti->ti_seq);             /* restore tcp header */
@@ -693,9 +698,11 @@ findso:
 	      m->m_len  += sizeof(struct tcpiphdr)+off-sizeof(struct tcphdr);
 	      *ip=save_ip;
 	      icmp_error(m, ICMP_UNREACH,code, 0,strerror(errno));
+          tp = tcp_close(tp);  
+          m_free(m);
 	    }
-	    tp = tcp_close(tp);
-	    m_free(m);
+	   
+	    // if errno == ECONNREFUSED. tcp_respond will free m. icmp_error not. it copies it
 	  } else {
 	    /*
 	     * Haven't connected yet, save the current mbuf
@@ -1202,10 +1209,16 @@ trimthenstep6:
 		}
 		if (acked > so->so_snd.sb_cc) {
 			tp->snd_wnd -= so->so_snd.sb_cc;
-			sbdrop(&so->so_snd, (int )so->so_snd.sb_cc);
+            sodropacked(so, (int)so->so_snd.sb_cc);
+            *drop_acked = 1;
+            *outso = so;
+
 			ourfinisacked = 1;
 		} else {
-			sbdrop(&so->so_snd, acked);
+            sodropacked(so, acked);
+            *drop_acked = 1;
+            *outso = so;
+
 			tp->snd_wnd -= acked;
 			ourfinisacked = 0;
 		}
@@ -1382,7 +1395,7 @@ dodata:
 			/*
 			 * If we receive a FIN we can't send more data,
 			 * set it SS_FDRAIN
-                         * Shutdown the socket if there is no rx data in the
+             * Shutdown the socket if there is no rx data in the
 			 * buffer.
 			 * soread() is called on completion of shutdown() and
 			 * will got to TCPS_LAST_ACK, and use tcp_output()
@@ -1732,3 +1745,4 @@ tcp_mss(tp, offer)
 
 	return mss;
 }
+

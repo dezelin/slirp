@@ -42,7 +42,15 @@
  * terms and conditions of the copyright.
  */
 
-#include <slirp.h>
+#include "tcp.h"
+#include "tcpip.h"
+#include "ip.h"
+#include "if.h"
+#include "slirp_common.h"
+#include "ip_icmp.h"
+#include "sbuf.h"
+#include "cksum.h"
+#include "tcp_timer.h"
 
 /*
  * Since this is only used in "stats socket", we give meaning

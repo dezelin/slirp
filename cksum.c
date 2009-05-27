@@ -34,8 +34,8 @@
  * in_cksum.c,v 1.2 1994/08/02 07:48:16 davidg Exp
  */
 
-#include <slirp.h>
-
+#include "slirp_common.h"
+#include "cksum.h"
 /*
  * Checksum routine for Internet Protocol family headers (Portable Version).
  *

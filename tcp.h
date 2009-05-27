@@ -37,6 +37,10 @@
 #ifndef _TCP_H_
 #define _TCP_H_
 
+#include "slirp_common.h"
+#include "mbuf.h"
+#include "socket.h"
+
 typedef	u_int32_t	tcp_seq;
 
 #define      PR_SLOWHZ       2               /* 2 slow timeouts per second (approx) */
@@ -169,7 +173,29 @@ struct tcphdr {
 #define TCP_ISSINCR     (125*1024)      /* increment for tcp_iss each second */
 
 extern tcp_seq tcp_iss;                /* tcp initial send seq # */
-
+extern struct socket tcb;
 extern const char * const tcpstates[];
+
+/* tcp_input */
+void tcp_input(register struct mbuf *m, int iphlen, struct socket *inso);
+int tcp_mss _P((register struct tcpcb *, u_int));
+
+/* tcp_output */
+int tcp_output _P((register struct tcpcb *));
+void tcp_setpersist _P((register struct tcpcb *));
+
+/* tcp_subr */
+void tcp_init _P((void));
+void tcp_template _P((struct tcpcb *));
+void tcp_respond _P((struct tcpcb *, register struct tcpiphdr *, register struct mbuf *, tcp_seq, tcp_seq, int));
+struct tcpcb * tcp_newtcpcb _P((struct socket *));
+struct tcpcb * tcp_close _P((register struct tcpcb *));
+int tcp_fconnect _P((struct socket *));
+struct tcpcb *tcp_drop(struct tcpcb *tp, int err);
+int tcp_attach _P((struct socket *));
+u_int8_t tcp_tos _P((struct socket *)); 
+int tcp_emu _P((struct socket *, struct mbuf *));
+int tcp_ctl _P((struct socket *));
+void tcp_sockclosed _P((struct tcpcb *));
 
 #endif

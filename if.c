@@ -5,7 +5,9 @@
  * terms and conditions of the copyright.
  */
 
-#include <slirp.h>
+#include "slirp_common.h"
+#include "if.h"
+#include "bootp.h"
 
 int     if_queued = 0;                  /* Number of packets queued so far */
 
@@ -40,84 +42,146 @@ if_init()
 	next_m = &if_batchq;
 }
 
+
+#define	ARPOP_REQUEST	1		/* ARP request			*/
+#define	ARPOP_REPLY	2		    /* ARP reply			*/
+
+struct ethhdr
+{
+	unsigned char	h_dest[ETH_ALEN];	/* destination eth addr	*/
+	unsigned char	h_source[ETH_ALEN];	/* source ether addr	*/
+	unsigned short	h_proto;		/* packet type ID field	*/
+};
+
+struct arphdr
+{
+	unsigned short	ar_hrd;		/* format of hardware address	*/
+	unsigned short	ar_pro;		/* format of protocol address	*/
+	unsigned char	ar_hln;		/* length of hardware address	*/
+	unsigned char	ar_pln;		/* length of protocol address	*/
+	unsigned short	ar_op;		/* ARP opcode (command)		*/
+
+	 /*
+	  *	 Ethernet looks like this : This bit is variable sized however...
+	  */
+	unsigned char		ar_sha[ETH_ALEN];	/* sender hardware address	*/
+	unsigned char		ar_sip[4];		/* sender IP address		*/
+	unsigned char		ar_tha[ETH_ALEN];	/* target hardware address	*/
+	unsigned char		ar_tip[4];		/* target IP address		*/
+};
+
+void arp_input(const uint8_t *pkt, int pkt_len)
+{
+    struct ethhdr *eh = (struct ethhdr *)pkt;
+    struct arphdr *ah = (struct arphdr *)(pkt + ETH_HLEN);
+    uint8_t arp_reply[ETH_HLEN + sizeof(struct arphdr)];
+    struct ethhdr *reh = (struct ethhdr *)arp_reply;
+    struct arphdr *rah = (struct arphdr *)(arp_reply + ETH_HLEN);
+    int ar_op;
+    //struct ex_list *ex_ptr;
+
+    ar_op = ntohs(ah->ar_op);
+    switch(ar_op) {
+    case ARPOP_REQUEST:
+        if (is_virtual_ip_allocated((struct in_addr *)ah->ar_tip)) {
+            goto arp_ok;
+        } else {
+             return;
+        }
+
 #if 0
-/*
- * This shouldn't be needed since the modem is blocking and
- * we don't expect any signals, but what the hell..
- */
-inline int
-writen(fd, bptr, n)
-	int fd;
-	char *bptr;
-	int n;
-{
-	int ret;
-	int total;
+        if (!memcmp(ah->ar_tip, &special_addr, 3)) {
+            if (ah->ar_tip[3] == CTL_DNS || ah->ar_tip[3] == CTL_ALIAS)
+                goto arp_ok;
+            for (ex_ptr = exec_list; ex_ptr; ex_ptr = ex_ptr->ex_next) {
+                if (ex_ptr->ex_addr == ah->ar_tip[3])
+                    goto arp_ok;
+            }
+#endif           
+        arp_ok:
+            /* XXX: make an ARP request to have the client address */
+            memcpy(client_ethaddr, eh->h_source, ETH_ALEN);
 
-	/* This should succeed most of the time */
-	ret = send(fd, bptr, n,0);
-	if (ret == n || ret <= 0)
-	   return ret;
+            /* ARP request for alias/dns mac address */
+            memcpy(reh->h_dest, pkt + ETH_ALEN, ETH_ALEN);
+            memcpy(reh->h_source, special_ethaddr, ETH_ALEN - 1);
+            reh->h_source[5] = ah->ar_tip[3];
+            reh->h_proto = htons(ETH_P_ARP);
 
-	/* Didn't write everything, go into the loop */
-	total = ret;
-	while (n > total) {
-		ret = send(fd, bptr+total, n-total,0);
-		if (ret <= 0)
-		   return ret;
-		total += ret;
-	}
-	return total;
+            rah->ar_hrd = htons(1);
+            rah->ar_pro = htons(ETH_P_IP);
+            rah->ar_hln = ETH_ALEN;
+            rah->ar_pln = 4;
+            rah->ar_op = htons(ARPOP_REPLY);
+            memcpy(rah->ar_sha, reh->h_source, ETH_ALEN);
+            memcpy(rah->ar_sip, ah->ar_tip, 4);
+            memcpy(rah->ar_tha, ah->ar_sha, ETH_ALEN);
+            memcpy(rah->ar_tip, ah->ar_sip, 4);
+            slirp_net_interface->slirp_output(slirp_net_interface, arp_reply, sizeof(arp_reply));
+        break;
+    case ARPOP_REPLY:   
+        /* reply to request of client mac address ? */
+        if (!memcmp(client_ethaddr, zero_ethaddr, ETH_ALEN) &&
+            !memcmp(ah->ar_sip, &client_ipaddr.s_addr, 4)) {
+            memcpy(client_ethaddr, ah->ar_sha, ETH_ALEN);
+        }
+        break;
+    default:
+        break;
+    }
 }
 
-/*
- * if_input - read() the tty, do "top level" processing (ie: check for any escapes),
- * and pass onto (*ttyp->if_input)
- *
- * XXXXX Any zeros arriving by themselves are NOT placed into the arriving packet.
- */
-#define INBUFF_SIZE 2048 /* XXX */
-void
-if_input(ttyp)
-	struct ttys *ttyp;
+/* output the IP packet to the ethernet device */
+static void if_encap(const uint8_t *ip_data, int ip_data_len)
 {
-	u_char if_inbuff[INBUFF_SIZE];
-	int if_n;
+    uint8_t buf[1600];
+    struct ethhdr *eh = (struct ethhdr *)buf;
 
-	DEBUG_CALL("if_input");
-	DEBUG_ARG("ttyp = %lx", (long)ttyp);
+    if (ip_data_len + ETH_HLEN > sizeof(buf))
+        return;
+    
+    if (!memcmp(client_ethaddr, zero_ethaddr, ETH_ALEN)) {
+        uint8_t arp_req[ETH_HLEN + sizeof(struct arphdr)];
+        struct ethhdr *reh = (struct ethhdr *)arp_req;
+        struct arphdr *rah = (struct arphdr *)(arp_req + ETH_HLEN);
+        const struct ip *iph = (const struct ip *)ip_data;
 
-	if_n = recv(ttyp->fd, (char *)if_inbuff, INBUFF_SIZE,0);
-
-	DEBUG_MISC((dfd, " read %d bytes\n", if_n));
-
-	if (if_n <= 0) {
-		if (if_n == 0 || (errno != EINTR && errno != EAGAIN)) {
-			if (ttyp->up)
-			   link_up--;
-			tty_detached(ttyp, 0);
-		}
-		return;
-	}
-	if (if_n == 1) {
-		if (*if_inbuff == '0') {
-			ttyp->ones = 0;
-			if (++ttyp->zeros >= 5)
-			   slirp_exit(0);
-			return;
-		}
-		if (*if_inbuff == '1') {
-			ttyp->zeros = 0;
-			if (++ttyp->ones >= 5)
-			   tty_detached(ttyp, 0);
-			return;
-		}
-	}
-	ttyp->ones = ttyp->zeros = 0;
-
-	(*ttyp->if_input)(ttyp, if_inbuff, if_n);
+        /* If the client addr is not known, there is no point in
+           sending the packet to it. Normally the sender should have
+           done an ARP request to get its MAC address. Here we do it
+           in place of sending the packet and we hope that the sender
+           will retry sending its packet. */
+        memset(reh->h_dest, 0xff, ETH_ALEN);
+        memcpy(reh->h_source, special_ethaddr, ETH_ALEN - 1);
+        reh->h_source[5] = CTL_ALIAS;
+        reh->h_proto = htons(ETH_P_ARP);
+        rah->ar_hrd = htons(1);
+        rah->ar_pro = htons(ETH_P_IP);
+        rah->ar_hln = ETH_ALEN;
+        rah->ar_pln = 4;
+        rah->ar_op = htons(ARPOP_REQUEST);
+        /* source hw addr */
+        memcpy(rah->ar_sha, special_ethaddr, ETH_ALEN - 1);
+        rah->ar_sha[5] = CTL_ALIAS;
+        /* source IP */
+        memcpy(rah->ar_sip, &alias_addr, 4);
+        /* target hw addr (none) */
+        memset(rah->ar_tha, 0, ETH_ALEN);
+        /* target IP */
+        memcpy(rah->ar_tip, &iph->ip_dst, 4);
+        client_ipaddr = iph->ip_dst;
+        slirp_net_interface->slirp_output(slirp_net_interface, arp_req, sizeof(arp_req));
+    } else {
+        memcpy(eh->h_dest, client_ethaddr, ETH_ALEN);
+        memcpy(eh->h_source, special_ethaddr, ETH_ALEN - 1);
+        /* XXX: not correct */
+        eh->h_source[5] = CTL_ALIAS;
+        eh->h_proto = htons(ETH_P_IP);
+        memcpy(buf + sizeof(struct ethhdr), ip_data, ip_data_len);
+        slirp_net_interface->slirp_output(slirp_net_interface, buf, ip_data_len + ETH_HLEN);
+    }
 }
-#endif
+
 
 /*
  * if_output: Queue packet into an output queue.
@@ -251,7 +315,7 @@ if_start(void)
 
  again:
         /* check if we can really output */
-        if (!slirp_can_output())
+    if (!slirp_net_interface->slirp_can_output(slirp_net_interface))
             return;
 
 	/*

@@ -42,17 +42,22 @@
  * terms and conditions of the copyright.
  */
 
-#include <slirp.h>
+#include "slirp_common.h"
+#include "udp.h"
+#include "ip.h"
 #include "ip_icmp.h"
+#include "bootp.h"
+#include "cksum.h"
 
 #ifdef LOG_ENABLED
 struct udpstat udpstat;
 #endif
 
 struct socket udb;
-
+#if 0
 static u_int8_t udp_tos(struct socket *so);
 static void udp_emu(struct socket *so, struct mbuf *m);
+#endif
 
 /*
  * UDP protocol implementation.
@@ -85,7 +90,7 @@ udp_input(m, iphlen)
 /*	struct mbuf *opts = 0;*/
 	int len;
 	struct ip save_ip;
-	struct socket *so;
+//	struct socket *so;
 
 	DEBUG_CALL("udp_input");
 	DEBUG_ARG("m = %lx", (long)m);
@@ -147,26 +152,25 @@ udp_input(m, iphlen)
 	    STAT(udpstat.udps_badsum++);
 	    goto bad;
 	  }
-	}
+    }
 
-        /*
-         *  handle DHCP/BOOTP
-         */
-        if (ntohs(uh->uh_dport) == BOOTP_SERVER) {
-            bootp_input(m);
-            goto bad;
-        }
-
-        if (slirp_restrict)
-            goto bad;
-
-        /*
-         *  handle TFTP
-         */
-        if (ntohs(uh->uh_dport) == TFTP_SERVER) {
-            tftp_input(m);
-            goto bad;
-        }
+    /*
+    *  handle DHCP/BOOTP
+    */
+    if (ntohs(uh->uh_dport) == BOOTP_SERVER) {
+        bootp_input(m);
+        goto bad;
+    } else { // TODO: temp.
+        return;
+    }
+#if 0 //TODO: tmp
+    /*
+    *  handle TFTP
+    */
+    if (ntohs(uh->uh_dport) == TFTP_SERVER) {
+        tftp_input(m);
+        goto bad;
+    }
 
 	/*
 	 * Locate pcb for datagram.
@@ -250,7 +254,7 @@ udp_input(m, iphlen)
 	m->m_data -= iphlen;
 	*ip=save_ip;
 	so->so_m=m;         /* ICMP backup */
-
+#endif
 	return;
 bad:
 	m_freem(m);
@@ -313,6 +317,7 @@ int udp_output2(struct socket *so, struct mbuf *m,
 	return (error);
 }
 
+#if 0 // TODO: temp till udp is supported
 int udp_output(struct socket *so, struct mbuf *m,
                struct sockaddr_in *addr)
 
@@ -680,3 +685,4 @@ udp_listen(port, laddr, lport, flags)
 
 	return so;
 }
+#endif

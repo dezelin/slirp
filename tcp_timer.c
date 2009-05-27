@@ -34,7 +34,9 @@
  * tcp_timer.c,v 1.2 1994/08/02 07:49:10 davidg Exp
  */
 
-#include <slirp.h>
+#include "slirp_common.h"
+#include "tcp_timer.h"
+#include "tcp.h"
 
 #ifdef LOG_ENABLED
 struct   tcpstat tcpstat;        /* tcp statistics */

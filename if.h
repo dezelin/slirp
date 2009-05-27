@@ -8,6 +8,15 @@
 #ifndef _IF_H_
 #define _IF_H_
 
+#include "mbuf.h"
+#include "socket.h"
+
+#define ETH_ALEN 6
+#define ETH_HLEN 14
+
+#define ETH_P_IP	0x0800		/* Internet Protocol packet	*/
+#define ETH_P_ARP	0x0806		/* Address Resolution packet	*/
+
 #define IF_COMPRESS	0x01	/* We want compression */
 #define IF_NOCOMPRESS	0x02	/* Do not do compression */
 #define IF_AUTOCOMP	0x04	/* Autodetect (default) */
@@ -60,4 +69,7 @@ struct slirp_ifstats {
 };
 #endif
 
+void if_init();
+void arp_input(const uint8_t *pkt, int pkt_len);
+void if_output(struct socket *so, struct mbuf *ifm);
 #endif

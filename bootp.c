@@ -21,13 +21,17 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  */
-#include <slirp.h>
+#include "bootp.h"
+#include "slirp_common.h"
+#include "udp.h"
+#include "if.h"
 
 /* XXX: only DHCP is supported */
 
-#define NB_ADDR 16
+#define NB_ADDR 16 // TODO: we don't need more than 1
 
 #define START_ADDR 15
+#define START_VIRTAUL_ADDR (NB_ADDR + START_ADDR)
 
 #define LEASE_TIME (24 * 3600)
 
@@ -37,6 +41,8 @@ typedef struct {
 } BOOTPClient;
 
 static BOOTPClient bootp_clients[NB_ADDR];
+
+static int virtual_ips_count = 0;
 
 const char *bootp_filename;
 
@@ -65,6 +71,31 @@ static BOOTPClient *get_new_addr(struct in_addr *paddr)
     paddr->s_addr = htonl(ntohl(special_addr.s_addr) | (i + START_ADDR));
     return bc;
 }
+
+int alloc_virtual_ip(struct in_addr *out_addr)
+{
+    if ((virtual_ips_count + START_VIRTAUL_ADDR) > 0xff)
+        return FALSE;
+    out_addr->s_addr = htonl(ntohl(special_addr.s_addr) | (virtual_ips_count + START_VIRTAUL_ADDR));
+    virtual_ips_count++;
+    return TRUE;
+}
+
+void clear_virtual_ips()
+{
+    virtual_ips_count = 0;
+}
+
+int is_virtual_ip_allocated(struct in_addr *addr)
+{
+    if ((addr->s_addr&htonl(0xffffff00)) == special_addr.s_addr) {
+        int lastbyte=(ntohl(addr->s_addr)) & 0xff;
+        return (((lastbyte >= START_VIRTAUL_ADDR) && 
+            (lastbyte < virtual_ips_count + START_VIRTAUL_ADDR)) ||(lastbyte == CTL_ALIAS) );
+    }
+    return FALSE;
+}
+
 
 static BOOTPClient *find_addr(struct in_addr *paddr, const uint8_t *macaddr)
 {
@@ -130,7 +161,10 @@ static void bootp_reply(struct bootp_t *bp)
     struct mbuf *m;
     struct bootp_t *rbp;
     struct sockaddr_in saddr, daddr;
+#if 0
     struct in_addr dns_addr;
+#endif
+    int reply_nack = 0;
     int dhcp_msg_type, val;
     uint8_t *q;
 
@@ -155,21 +189,29 @@ static void bootp_reply(struct bootp_t *bp)
     memset(rbp, 0, sizeof(struct bootp_t));
 
     if (dhcp_msg_type == DHCPDISCOVER) {
-    new_addr:
-        bc = get_new_addr(&daddr.sin_addr);
+        bc = find_addr(&daddr.sin_addr, bp->bp_hwaddr);
+        if (!bc) {
+            bc = get_new_addr(&daddr.sin_addr);
+        } 
+
         if (!bc) {
             dprintf("no address left\n");
             return;
         }
+
         memcpy(bc->macaddr, client_ethaddr, 6);
     } else {
         bc = find_addr(&daddr.sin_addr, bp->bp_hwaddr);
         if (!bc) {
-            /* if never assigned, behaves as if it was already
-               assigned (windows fix because it remembers its address) */
-            goto new_addr;
+            // The requested address might no be in our network. We return nack.
+            // TODO: make this nicer by checking if the requested address is valid and
+            // accordingly allocating it or return nack.
+            reply_nack = 1;
+            inet_aton("255.255.255.255", &daddr.sin_addr);
         }
     }
+
+ 
 
     if (bootp_filename)
         snprintf((char *)rbp->bp_file, sizeof(rbp->bp_file), "%s",
@@ -188,9 +230,11 @@ static void bootp_reply(struct bootp_t *bp)
     rbp->bp_hlen = 6;
     memcpy(rbp->bp_hwaddr, bp->bp_hwaddr, 6);
 
-    rbp->bp_yiaddr = daddr.sin_addr; /* Client IP address */
-    rbp->bp_siaddr = saddr.sin_addr; /* Server IP address */
-
+    if (!reply_nack) {
+        rbp->bp_yiaddr = daddr.sin_addr; /* Client IP address */
+        rbp->bp_siaddr = saddr.sin_addr; /* Server IP address */
+    } 
+  
     q = rbp->bp_vend;
     memcpy(q, rfc1533_cookie, 4);
     q += 4;
@@ -202,7 +246,12 @@ static void bootp_reply(struct bootp_t *bp)
     } else if (dhcp_msg_type == DHCPREQUEST) {
         *q++ = RFC2132_MSG_TYPE;
         *q++ = 1;
-        *q++ = DHCPACK;
+
+        if (!reply_nack) {
+            *q++ = DHCPACK;
+        } else {
+            *q++ = DHCPNACK;
+        }
     }
 
     if (dhcp_msg_type == DHCPDISCOVER ||
@@ -212,38 +261,44 @@ static void bootp_reply(struct bootp_t *bp)
         memcpy(q, &saddr.sin_addr, 4);
         q += 4;
 
-        *q++ = RFC1533_NETMASK;
-        *q++ = 4;
-        *q++ = 0xff;
-        *q++ = 0xff;
-        *q++ = 0xff;
-        *q++ = 0x00;
-
-        if (!slirp_restrict) {
-            *q++ = RFC1533_GATEWAY;
+        if (!reply_nack) {
+            *q++ = RFC1533_NETMASK;
             *q++ = 4;
-            memcpy(q, &saddr.sin_addr, 4);
+            *q++ = 0xff;
+            *q++ = 0xff;
+            *q++ = 0xff;
+            *q++ = 0x00;
+
+ // TODO: removed gateway. Return it to be optional      
+#if 0 
+            if (!slirp_restrict) {
+                *q++ = RFC1533_GATEWAY;
+                *q++ = 4;
+                memcpy(q, &saddr.sin_addr, 4);
+                q += 4;
+
+                *q++ = RFC1533_DNS;
+                *q++ = 4;
+                dns_addr.s_addr = htonl(ntohl(special_addr.s_addr) | CTL_DNS);
+                memcpy(q, &dns_addr, 4);
+                q += 4;
+              }
+#endif
+
+            *q++ = RFC2132_LEASE_TIME;
+            *q++ = 4;
+            val = htonl(LEASE_TIME);
+            memcpy(q, &val, 4);
             q += 4;
 
-            *q++ = RFC1533_DNS;
-            *q++ = 4;
-            dns_addr.s_addr = htonl(ntohl(special_addr.s_addr) | CTL_DNS);
-            memcpy(q, &dns_addr, 4);
-            q += 4;
-        }
+            if (*slirp_hostname) {
+                val = strlen(slirp_hostname);
+                *q++ = RFC1533_HOSTNAME;
+                *q++ = val;
+                memcpy(q, slirp_hostname, val);
+                q += val;
+            }   
 
-        *q++ = RFC2132_LEASE_TIME;
-        *q++ = 4;
-        val = htonl(LEASE_TIME);
-        memcpy(q, &val, 4);
-        q += 4;
-
-        if (*slirp_hostname) {
-            val = strlen(slirp_hostname);
-            *q++ = RFC1533_HOSTNAME;
-            *q++ = val;
-            memcpy(q, slirp_hostname, val);
-            q += val;
         }
     }
     *q++ = RFC1533_END;

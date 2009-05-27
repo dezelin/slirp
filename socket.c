@@ -5,13 +5,19 @@
  * terms and conditions of the copyright.
  */
 
-#include "qemu-common.h"
 #define WANT_SYS_IOCTL_H
-#include <slirp.h>
+#include "slirp_common.h"
 #include "ip_icmp.h"
+#include "socket.h"
+#include "tcp.h"
+#include "udp.h"
+
 #ifdef __sun__
 #include <sys/filio.h>
 #endif
+
+#define CONN_CANFSEND(so) (((so)->so_state & (SS_FCANTSENDMORE|SS_ISFCONNECTED)) == SS_ISFCONNECTED)
+#define CONN_CANFRCV(so) (((so)->so_state & (SS_FCANTRCVMORE|SS_ISFCONNECTED)) == SS_ISFCONNECTED)
 
 static void sofcantrcvmore(struct socket *so);
 static void sofcantsendmore(struct socket *so);
@@ -62,7 +68,7 @@ socreate()
   if(so) {
     memset(so, 0, sizeof(struct socket));
     so->so_state = SS_NOFDREF;
-    so->s = -1;
+    so->usr_so = NULL;
   }
   return(so);
 }
@@ -174,12 +180,8 @@ soread(so)
 	 */
 	sopreprbuf(so, iov, &n);
 
-#ifdef HAVE_READV
-	nn = readv(so->s, (struct iovec *)iov, n);
-	DEBUG_MISC((dfd, " ... read nn = %d bytes\n", nn));
-#else
-	nn = recv(so->s, iov[0].iov_base, iov[0].iov_len,0);
-#endif
+    nn = slirp_net_interface->recv(slirp_net_interface, so->usr_so, iov[0].iov_base, iov[0].iov_len);
+
 	if (nn <= 0) {
 		if (nn < 0 && (errno == EINTR || errno == EAGAIN))
 			return 0;
@@ -191,7 +193,6 @@ soread(so)
 		}
 	}
 
-#ifndef HAVE_READV
 	/*
 	 * If there was no error, try and read the second time round
 	 * We read again if n = 2 (ie, there's another part of the buffer)
@@ -203,13 +204,15 @@ soread(so)
 	 */
 	if (n == 2 && nn == iov[0].iov_len) {
             int ret;
-            ret = recv(so->s, iov[1].iov_base, iov[1].iov_len,0);
+            
+            ret = slirp_net_interface->recv(slirp_net_interface, so->usr_so, 
+                iov[1].iov_base, iov[1].iov_len);
             if (ret > 0)
                 nn += ret;
         }
 
 	DEBUG_MISC((dfd, " ... read nn = %d bytes\n", nn));
-#endif
+
 
 	/* Update fields */
 	sb->sb_cc += nn;
@@ -219,47 +222,6 @@ soread(so)
 	return nn;
 }
 
-int soreadbuf(struct socket *so, const char *buf, int size)
-{
-    int n, nn, copy = size;
-	struct sbuf *sb = &so->so_snd;
-	struct iovec iov[2];
-
-	DEBUG_CALL("soreadbuf");
-	DEBUG_ARG("so = %lx", (long )so);
-
-	/*
-	 * No need to check if there's enough room to read.
-	 * soread wouldn't have been called if there weren't
-	 */
-	if (sopreprbuf(so, iov, &n) < size)
-        goto err;
-
-    nn = MIN(iov[0].iov_len, copy);
-    memcpy(iov[0].iov_base, buf, nn);
-
-    copy -= nn;
-    buf += nn;
-
-    if (copy == 0)
-        goto done;
-
-    memcpy(iov[1].iov_base, buf, copy);
-
-done:
-    /* Update fields */
-	sb->sb_cc += size;
-	sb->sb_wptr += size;
-	if (sb->sb_wptr >= (sb->sb_data + sb->sb_datalen))
-		sb->sb_wptr -= sb->sb_datalen;
-    return size;
-err:
-
-    sofcantrcvmore(so);
-    tcp_sockclosed(sototcpcb(so));
-    fprintf(stderr, "soreadbuf buffer to small");
-    return -1;
-}
 
 /*
  * Get urgent data
@@ -313,8 +275,9 @@ sosendoob(so)
 	   so->so_urgc = 2048; /* XXXX */
 
 	if (sb->sb_rptr < sb->sb_wptr) {
-		/* We can send it directly */
-		n = slirp_send(so, sb->sb_rptr, so->so_urgc, (MSG_OOB)); /* |MSG_DONTWAIT)); */
+        n = slirp_net_interface->send(slirp_net_interface, so->usr_so, (uint8_t *)sb->sb_rptr, 
+            so->so_urgc, 1);
+
 		so->so_urgc -= n;
 
 		DEBUG_MISC((dfd, " --- sent %d bytes urgent data, %d urgent bytes left\n", n, so->so_urgc));
@@ -335,7 +298,9 @@ sosendoob(so)
 			so->so_urgc -= n;
 			len += n;
 		}
-		n = slirp_send(so, buff, len, (MSG_OOB)); /* |MSG_DONTWAIT)); */
+		n = slirp_net_interface->send(slirp_net_interface, so->usr_so, 
+            (uint8_t *)buff, len, 1);
+
 #ifdef DEBUG
 		if (n != len)
 		   DEBUG_ERROR((dfd, "Didn't send all data urgently XXXXX\n"));
@@ -402,13 +367,8 @@ sowrite(so)
 	}
 	/* Check if there's urgent data to send, and if so, send it */
 
-#ifdef HAVE_READV
-	nn = writev(so->s, (const struct iovec *)iov, n);
+    nn = slirp_net_interface->send(slirp_net_interface, so->usr_so, iov[0].iov_base, iov[0].iov_len, 0);
 
-	DEBUG_MISC((dfd, "  ... wrote nn = %d bytes\n", nn));
-#else
-	nn = slirp_send(so, iov[0].iov_base, iov[0].iov_len,0);
-#endif
 	/* This should never happen, but people tell me it does *shrug* */
 	if (nn < 0 && (errno == EAGAIN || errno == EINTR))
 		return 0;
@@ -421,15 +381,15 @@ sowrite(so)
 		return -1;
 	}
 
-#ifndef HAVE_READV
 	if (n == 2 && nn == iov[0].iov_len) {
-            int ret;
-            ret = slirp_send(so, iov[1].iov_base, iov[1].iov_len,0);
+        int ret;
+        ret = slirp_net_interface->send(slirp_net_interface, so->usr_so,
+            iov[1].iov_base, iov[1].iov_len, 0);
+
             if (ret > 0)
                 nn += ret;
         }
         DEBUG_MISC((dfd, "  ... wrote nn = %d bytes\n", nn));
-#endif
 
 	/* Update sbuf */
 	sb->sb_cc -= nn;
@@ -446,6 +406,76 @@ sowrite(so)
 
 	return nn;
 }
+
+void sotrysend (struct socket *so)
+{
+    if (so->so_state & SS_NOFDREF)
+        return;
+
+    if (CONN_CANFSEND(so) && so->so_rcv.sb_cc) {
+        sowrite(so);
+    }
+}
+int sotryrecv(struct socket *so)
+{
+    int ret = 0;
+    if (so->so_state & SS_NOFDREF)
+        return 0;
+    if (CONN_CANFRCV(so) && (so->so_snd.sb_cc < (so->so_snd.sb_datalen/2))) {
+        ret = soread(so);
+    }
+    return ret;
+}
+
+void sodropacked (struct socket *so, int acked)
+{
+    sbdrop(&so->so_snd, acked);
+}
+ 
+
+#if 0 // UDP and socket listen
+int soreadbuf(struct socket *so, const char *buf, int size)
+{
+    int n, nn, copy = size;
+	struct sbuf *sb = &so->so_snd;
+	struct iovec iov[2];
+
+	DEBUG_CALL("soreadbuf");
+	DEBUG_ARG("so = %lx", (long )so);
+
+	/*
+	 * No need to check if there's enough room to read.
+	 * soread wouldn't have been called if there weren't
+	 */
+	if (sopreprbuf(so, iov, &n) < size)
+        goto err;
+
+    nn = min(iov[0].iov_len, copy);
+    memcpy(iov[0].iov_base, buf, nn);
+
+    copy -= nn;
+    buf += nn;
+
+    if (copy == 0)
+        goto done;
+
+    memcpy(iov[1].iov_base, buf, copy);
+
+done:
+    /* Update fields */
+	sb->sb_cc += size;
+	sb->sb_wptr += size;
+	if (sb->sb_wptr >= (sb->sb_data + sb->sb_datalen))
+		sb->sb_wptr -= sb->sb_datalen;
+    return size;
+err:
+
+    sofcantrcvmore(so);
+    tcp_sockclosed(sototcpcb(so));
+    fprintf(stderr, "soreadbuf buffer to small");
+    return -1;
+}
+
 
 /*
  * recvfrom() a UDP socket
@@ -672,6 +702,8 @@ solisten(port, laddr, lport, flags)
 	return so;
 }
 
+#endif
+
 #if 0
 /*
  * Data is available in so_rcv
@@ -725,12 +757,10 @@ soisfconnected(so)
 static void
 sofcantrcvmore(struct socket *so)
 {
-	if ((so->so_state & SS_NOFDREF) == 0) {
-		shutdown(so->s,0);
-		if(global_writefds) {
-		  FD_CLR(so->s,global_writefds);
-		}
-	}
+    if ((so->so_state & SS_NOFDREF) == 0) {
+        slirp_net_interface->shutdown_recv(slirp_net_interface, so->usr_so);
+    }
+
 	so->so_state &= ~(SS_ISFCONNECTING);
 	if (so->so_state & SS_FCANTSENDMORE)
 	   so->so_state = SS_NOFDREF; /* Don't select it */ /* XXX close() here as well? */
@@ -741,15 +771,10 @@ sofcantrcvmore(struct socket *so)
 static void
 sofcantsendmore(struct socket *so)
 {
-	if ((so->so_state & SS_NOFDREF) == 0) {
-            shutdown(so->s,1);           /* send FIN to fhost */
-            if (global_readfds) {
-                FD_CLR(so->s,global_readfds);
-            }
-            if (global_xfds) {
-                FD_CLR(so->s,global_xfds);
-            }
-	}
+    if ((so->so_state & SS_NOFDREF) == 0) {
+        slirp_net_interface->shutdown_send(slirp_net_interface, so->usr_so);
+    }
+
 	so->so_state &= ~(SS_ISFCONNECTING);
 	if (so->so_state & SS_FCANTRCVMORE)
 	   so->so_state = SS_NOFDREF; /* as above */
@@ -781,4 +806,69 @@ sofwdrain(so)
 		so->so_state |= SS_FWDRAIN;
 	else
 		sofcantsendmore(so);
+}
+
+/*
+ * Try and write() to the socket, whatever doesn't get written
+ * append to the buffer... for a host with a fast net connection,
+ * this prevents an unnecessary copy of the data
+ * (the socket is non-blocking, so we won't hang)
+ */
+void
+sosbappend(so, m)
+	struct socket *so;
+	struct mbuf *m;
+{
+	int ret = 0;
+
+	DEBUG_CALL("sbappend");
+	DEBUG_ARG("so = %lx", (long)so);
+	DEBUG_ARG("m = %lx", (long)m);
+	DEBUG_ARG("m->m_len = %d", m->m_len);
+
+	/* Shouldn't happen, but...  e.g. foreign host closes connection */
+	if (m->m_len <= 0) {
+		m_free(m);
+		return;
+	}
+
+	/*
+	 * If there is urgent data, call sosendoob
+	 * if not all was sent, sowrite will take care of the rest
+	 * (The rest of this function is just an optimisation)
+	 */
+	if (so->so_urgc) {
+		sbappendsb(&so->so_rcv, m);
+		m_free(m);
+		sosendoob(so);
+		return;
+	}
+
+	/*
+	 * We only write if there's nothing in the buffer,
+	 * ottherwise it'll arrive out of order, and hence corrupt
+	 */
+    if (!so->so_rcv.sb_cc){
+        ret = slirp_net_interface->send(slirp_net_interface, so->usr_so, (uint8_t*)m->m_data,  m->m_len, 0);
+    }
+
+	if (ret <= 0) {
+		/*
+		 * Nothing was written
+		 * It's possible that the socket has closed, but
+		 * we don't need to check because if it has closed,
+		 * it will be detected in the normal way by soread()
+		 */
+		sbappendsb(&so->so_rcv, m);
+	} else if (ret != m->m_len) {
+		/*
+		 * Something was written, but not everything..
+		 * sbappendsb the rest
+		 */
+		m->m_len -= ret;
+		m->m_data += ret;
+		sbappendsb(&so->so_rcv, m);
+	} /* else */
+	/* Whatever happened, we free the mbuf */
+	m_free(m);
 }

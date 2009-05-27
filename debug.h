@@ -1,3 +1,5 @@
+#ifndef __SLIRP_DEBUG_H__
+#define __SLIRP_DEBUG_H__
 /*
  * Copyright (c) 1995 Danny Gasparovski.
  *
@@ -36,4 +38,4 @@ extern int slirp_debug;
 
 #endif
 
-void debug_init _P((char *, int));
+#endif

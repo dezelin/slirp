@@ -8,7 +8,8 @@
 #ifndef _SBUF_H_
 #define _SBUF_H_
 
-#define sbflush(sb) sbdrop((sb),(sb)->sb_cc)
+#include "mbuf.h"
+
 #define sbspace(sb) ((sb)->sb_datalen - (sb)->sb_cc)
 
 struct sbuf {
@@ -24,7 +25,7 @@ struct sbuf {
 void sbfree _P((struct sbuf *));
 void sbdrop _P((struct sbuf *, int));
 void sbreserve _P((struct sbuf *, int));
-void sbappend _P((struct socket *, struct mbuf *));
 void sbcopy _P((struct sbuf *, int, int, char *));
+void sbappendsb _P((struct sbuf *sb, struct mbuf *m)); 
 
 #endif

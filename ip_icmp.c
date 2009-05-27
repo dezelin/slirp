@@ -34,8 +34,9 @@
  * ip_icmp.c,v 1.7 1995/05/30 08:09:42 rgrimes Exp
  */
 
-#include "slirp.h"
+#include "slirp_common.h"
 #include "ip_icmp.h"
+#include "cksum.h"
 
 #ifdef LOG_ENABLED
 struct icmpstat icmpstat;
@@ -71,6 +72,8 @@ static const int icmp_flush[19] = {
 /*
  * Process a received ICMP message.
  */
+
+#if 0 // TODO: temp till udp is supported
 void
 icmp_input(m, hlen)
      struct mbuf *m;
@@ -185,7 +188,7 @@ end_error:
   /* m is m_free()'d xor put in a socket xor or given to ip_send */
   return;
 }
-
+#endif
 
 /*
  *	Send an ICMP message in response to a situation
@@ -319,6 +322,7 @@ end_error:
 }
 #undef ICMP_MAXDATALEN
 
+#if 0 // TODO: temp till udp is supported
 /*
  * Reflect the ip packet back to the source
  */
@@ -371,3 +375,4 @@ icmp_reflect(m)
 
   STAT(icmpstat.icps_reflect++);
 }
+#endif
