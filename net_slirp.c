@@ -55,7 +55,6 @@ struct in_addr client_ipaddr;
 
 
 int link_up;
-struct timeval tt;
 FILE *lfd;
 
 char slirp_hostname[33];

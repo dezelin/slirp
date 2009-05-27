@@ -71,7 +71,7 @@ void
 ip_init()
 {
 	ipq.ip_link.next = ipq.ip_link.prev = &ipq.ip_link;
-	ip_id = tt.tv_sec & 0xffff;
+	ip_id = 0;
 	udp_init();
 	tcp_init();
 }
