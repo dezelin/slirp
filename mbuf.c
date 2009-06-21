@@ -121,6 +121,7 @@ void
 m_cat(m, n)
 	register struct mbuf *m, *n;
 {
+    // TODO: bug if n->m_len > M_FREEROOM(m) + MINCSIZE
 	/*
 	 * If there's no room, realloc
 	 */

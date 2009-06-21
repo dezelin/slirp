@@ -49,12 +49,14 @@ const uint8_t special_ethaddr[6] = {
     0x52, 0x54, 0x00, 0x12, 0x35, 0x00
 };
 
+int slirp_restricted;
+
 /* ARP cache for the guest IP addresses (XXX: allow many entries) */
 uint8_t client_ethaddr[6]; // bootp_reply sets it or arp...
 struct in_addr client_ipaddr;
 
 
-int link_up;
+int link_up = 0;
 FILE *lfd;
 
 char slirp_hostname[33];
@@ -63,6 +65,9 @@ SlirpUsrNetworkInterface *slirp_net_interface;
 
 UserTimer *fast_timer, *slow_timer;
 int fast_timer_armed, slow_timer_armed;
+
+int slirp_freezed = 0;
+
 /*
 u_int curtime, last_fasttimo, last_slowtimo;
 static void updtime(void)
@@ -152,6 +157,10 @@ static int need_slow_timer()
 
 static void fast_timeout(void *opaque)
 {
+    if (slirp_freezed) {
+        return;
+    }
+
     tcp_fasttimo();
 
     if (if_queued)
@@ -165,6 +174,10 @@ static void fast_timeout(void *opaque)
 
 static void slow_timeout(void *opaque)
 {
+    if (slirp_freezed) {
+        return;
+    }
+
     ip_slowtimo();
 	tcp_slowtimo();
     if (need_slow_timer()) {
@@ -175,7 +188,8 @@ static void slow_timeout(void *opaque)
 }
 
 
-void DLL_PUBLIC net_slirp_init(struct in_addr special_ip, SlirpUsrNetworkInterface *net_interface)
+void DLL_PUBLIC net_slirp_init(struct in_addr special_ip, int restricted, 
+                               SlirpUsrNetworkInterface *net_interface)
 {
     //    debug_init("/tmp/slirp.log", DEBUG_DEFAULT);
     link_up = 1;
@@ -197,6 +211,7 @@ void DLL_PUBLIC net_slirp_init(struct in_addr special_ip, SlirpUsrNetworkInterfa
     special_addr.s_addr = special_ip.s_addr;
     alias_addr.s_addr = special_addr.s_addr | htonl(CTL_ALIAS);
 
+    slirp_restricted = restricted;
     slirp_net_interface = net_interface;
 
     getouraddr();
@@ -238,7 +253,7 @@ void DLL_PUBLIC net_slirp_input(const uint8_t *pkt, int pkt_len)
         ip_input(m);
         break;
     default:
-        printf("SLIRP INPUT : UNKNOWN\n");
+        printf("SLIRP INPUT : unsupported protocol %x\n", proto);
         break;
     }
 
@@ -272,18 +287,21 @@ void DLL_PUBLIC net_slirp_socket_connect_failed_notify(SlirpSocket *sckt)
 void DLL_PUBLIC net_slirp_socket_can_send_notify(SlirpSocket *sckt)
 {
     struct socket *so = (struct socket *)sckt;
-    sotrysend(so);
+    if (socansend(so)) {
+        sowrite(so);
+    }
+    
 }
 
 void DLL_PUBLIC net_slirp_socket_can_receive_notify(SlirpSocket *sckt)
 {
     struct socket *so = (struct socket *)sckt;
-
-    // if it can't read cause a buffer is full, it will try again in sodropacked
-    if (sotryrecv(so) > 0) {
-     	/* Output it if we read something */
-        tcp_output(sototcpcb(so));
-    }
+    // if we can't read cause a buffer is full, we will try again after sodropacked
+    if (socanrecv(so)) {
+        if (soread(so) > 0) {
+            tcp_output(sototcpcb(so));
+        }
+    }    
 }
 
 void DLL_PUBLIC net_slirp_socket_abort(SlirpSocket *sckt)
@@ -300,4 +318,78 @@ int DLL_PUBLIC net_slirp_allocate_virtual_ip(struct in_addr *addr)
 void DLL_PUBLIC net_slirp_clear_virtual_ips()
 {
     clear_virtual_ips();
+}
+
+
+typedef struct __attribute__((packed)) SlirpExportData {
+    uint8_t client_ethaddr[6];
+    uint8_t client_ipaddr[4];
+    uint32_t tcp_iss;
+    uint8_t  bootp_data[0];
+} SlirpExportData;  
+
+uint64_t DLL_PUBLIC net_slirp_state_export(void **export_state)
+{
+    void *bootp_data;
+    uint64_t bootp_size;
+    SlirpExportData *ret_data;
+    uint64_t total_size;
+
+    bootp_size = bootp_export(&bootp_data);
+    total_size = sizeof(SlirpExportData) + bootp_size;
+    ret_data = malloc(total_size);
+
+    memcpy(ret_data->client_ethaddr, client_ethaddr, 6);
+    memcpy(ret_data->client_ipaddr, &client_ipaddr.s_addr, 4);
+    ret_data->tcp_iss = tcp_iss;
+    memcpy(ret_data->bootp_data, bootp_data, bootp_size);
+    free(bootp_data);
+
+    *export_state = ret_data;
+    return total_size;
+}
+
+
+void DLL_PUBLIC net_slirp_state_restore(void *export_state)
+{
+    SlirpExportData *slirp_data = (SlirpExportData *)export_state;
+
+    bootp_restore(slirp_data->bootp_data);
+    tcp_iss = slirp_data->tcp_iss;
+    memcpy(client_ethaddr, slirp_data->client_ethaddr, 6);
+    memcpy(&client_ipaddr.s_addr, slirp_data->client_ipaddr, 4);
+    slirp_freezed = TRUE;
+
+}
+
+uint64_t DLL_PUBLIC net_slirp_tcp_socket_export(SlirpSocket *sckt, void **export_socket)
+{
+    return tcp_socket_export((struct socket *)sckt, export_socket);
+}
+
+SlirpSocket DLL_PUBLIC *net_slirp_tcp_socket_restore(void *export_socket, UserSocket *usr_socket)
+{
+    SlirpSocket *ret = tcp_socket_restore(export_socket, usr_socket);
+
+
+    return ret;
+}
+
+
+void DLL_PUBLIC net_slirp_freeze()
+{
+    slirp_freezed = TRUE;
+}
+
+
+void DLL_PUBLIC net_slirp_unfreeze()
+{
+    slirp_freezed = FALSE;
+    if (!slow_timer_armed && need_slow_timer()) {
+        slirp_net_interface->arm_timer(slirp_net_interface, slow_timer, SLOW_TIMEOUT_MS);
+    }
+
+    if (!fast_timer_armed && need_fast_timer()) {
+        slirp_net_interface->arm_timer(slirp_net_interface, fast_timer, FAST_TIMEOUT_MS);
+    }
 }

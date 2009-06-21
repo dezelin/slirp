@@ -5,8 +5,6 @@
  * terms and conditions of the copyright.
  */
 
-/* MINE */
-
 #ifndef _SLIRP_SOCKET_H_
 #define _SLIRP_SOCKET_H_
 
@@ -27,9 +25,9 @@ struct socket {
 			/* XXX union these with not-yet-used sbuf params */
   struct mbuf *so_m;	           /* Pointer to the original SYN packet,
 				    * for non-blocking connect()'s, and
-				    * PING reply's */
+				    * PING reply's */ 
   struct tcpiphdr *so_ti;	   /* Pointer to the original ti within
-				    * so_mconn, for non-blocking connections */
+				    * so_mconn, for non-blocking connections */ 
   int so_urgc;
   struct in_addr so_faddr;	   /* foreign host table entry */
   struct in_addr so_laddr;	   /* local host table entry */
@@ -84,9 +82,9 @@ void sorecvoob _P((struct socket *));
 int sosendoob _P((struct socket *));
 int sowrite _P((struct socket *));
 
+int socanrecv(struct socket *so);
+int socansend(struct socket *so);
 
-void sotrysend _P((struct socket *)); 
-int sotryrecv _P((struct socket *)); 
 void sodropacked _P((struct socket *, int));
 
 void soisfconnecting _P((register struct socket *));

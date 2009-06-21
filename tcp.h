@@ -198,4 +198,6 @@ int tcp_emu _P((struct socket *, struct mbuf *));
 int tcp_ctl _P((struct socket *));
 void tcp_sockclosed _P((struct tcpcb *));
 
+u_int64_t tcp_socket_export(struct socket *so, void **export_socket);
+struct socket *tcp_socket_restore(void *export_socket, UserSocket *usr_socket);
 #endif

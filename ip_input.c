@@ -70,10 +70,12 @@ static void ip_deq(register struct ipasfrag *p);
 void
 ip_init()
 {
+    struct timeval tt;
 	ipq.ip_link.next = ipq.ip_link.prev = &ipq.ip_link;
-	ip_id = 0;
-	udp_init();
-	tcp_init();
+    gettimeofday(&tt, 0);
+    ip_id = tt.tv_sec & 0xffff; 
+    udp_init();
+    tcp_init();
 }
 
 /*

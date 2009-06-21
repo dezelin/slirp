@@ -242,18 +242,28 @@ present:
 
 static void
 tcp_input1(register struct mbuf *m, int iphlen, struct socket *inso, 
-           int *drop_acked, struct socket **outso);
+           int *drop_acked_or_fconnected, struct socket **outso);
 
 void tcp_input(m, iphlen, inso)
 	register struct mbuf *m;
 	int iphlen;
 	struct socket *inso;
 {
-    int drop_acked = 0;
+    int drop_acked_or_fconnected = 0;
+
     struct socket *so = NULL;
-    tcp_input1(m, iphlen, inso, &drop_acked, &so);
-    if (drop_acked && so) {
-        sotryrecv(so); 
+    tcp_input1(m, iphlen, inso, &drop_acked_or_fconnected, &so);
+    /* tcp_input may trigger ack drop or status change to fconnected (ack after syn ack).
+       If a previous recv failed because of status, or place limit in snd buf, we should try to recv again.
+       Another use: if fin is pending, and we didn't recv it because there was also data pending for recv,
+       after the data is acked, we should recv the fin (by calling recv and getting 0) */
+    if (drop_acked_or_fconnected && so) {
+        if (socanrecv(so)) {
+            if (soread(so) > 0) {
+                /* Output it if we read something */
+                tcp_output(sototcpcb(so));
+            }
+        }
     }
 }
 /*
@@ -262,11 +272,11 @@ void tcp_input(m, iphlen, inso)
  * outso is valid only when drop_acked is true
  */
 static void
-tcp_input1(m, iphlen, inso, drop_acked, outso)
+tcp_input1(m, iphlen, inso, drop_acked_or_fconnected, outso)
 	register struct mbuf *m;
 	int iphlen;
 	struct socket *inso;
-    int *drop_acked;
+    int *drop_acked_or_fconnected;
     struct socket **outso;
 {
   	struct ip save_ip, *ip;
@@ -283,7 +293,7 @@ tcp_input1(m, iphlen, inso, drop_acked, outso)
 	u_long tiwin;
 	int ret;
 /*	int ts_present = 0; */
-    *drop_acked = 0;
+    *drop_acked_or_fconnected = 0;
 
 	DEBUG_CALL("tcp_input");
 	DEBUG_ARGS((dfd," m = %8lx  iphlen = %2d  inso = %lx\n",
@@ -549,7 +559,7 @@ findso:
 				STAT(tcpstat.tcps_rcvackbyte += acked);
 
                 sodropacked(so, acked);
-                *drop_acked = 1;
+                *drop_acked_or_fconnected = 1;
                 *outso = so;
                 
 				tp->snd_una = ti->ti_ack;
@@ -788,7 +798,8 @@ findso:
 			STAT(tcpstat.tcps_connects++);
 			soisfconnected(so);
 			tp->t_state = TCPS_ESTABLISHED;
-
+            *drop_acked_or_fconnected = 1;
+            *outso = so;
 			/* Do window scaling on this connection? */
 /*			if ((tp->t_flags & (TF_RCVD_SCALE|TF_REQ_SCALE)) ==
  *				(TF_RCVD_SCALE|TF_REQ_SCALE)) {
@@ -1048,6 +1059,8 @@ trimthenstep6:
 		  ret = tcp_ctl(so);
 		  if (ret == 1) {
 		    soisfconnected(so);
+            *drop_acked_or_fconnected = 1;
+            *outso = so;
 		    so->so_state &= ~SS_CTL;   /* success XXX */
 		  } else if (ret == 2) {
 		    so->so_state = SS_NOFDREF; /* CTL_CMD */
@@ -1057,6 +1070,8 @@ trimthenstep6:
 		  }
 		} else {
 		  soisfconnected(so);
+          *drop_acked_or_fconnected = 1;
+          *outso = so;
 		}
 
 		/* Do window scaling? */
@@ -1210,13 +1225,13 @@ trimthenstep6:
 		if (acked > so->so_snd.sb_cc) {
 			tp->snd_wnd -= so->so_snd.sb_cc;
             sodropacked(so, (int)so->so_snd.sb_cc);
-            *drop_acked = 1;
+            *drop_acked_or_fconnected = 1;
             *outso = so;
 
 			ourfinisacked = 1;
 		} else {
             sodropacked(so, acked);
-            *drop_acked = 1;
+            *drop_acked_or_fconnected = 1;
             *outso = so;
 
 			tp->snd_wnd -= acked;

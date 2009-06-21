@@ -311,6 +311,8 @@ extern const uint8_t zero_ethaddr[6];
 extern const uint8_t special_ethaddr[6];
 extern struct in_addr client_ipaddr;
 
+extern int slirp_restricted;
+
 extern SlirpUsrNetworkInterface *slirp_net_interface;
 #endif
 

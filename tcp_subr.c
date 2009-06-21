@@ -494,7 +494,7 @@ tcp_emu(so, m)
 	struct socket *so;
 	struct mbuf *m;
 {
-    printf("Error tcp_emu not supported");
+    fprintf(stderr, "Error tcp_emu not supported");
     exit(-1);
 }
 
@@ -502,6 +502,489 @@ int
 tcp_ctl(so)
 	struct socket *so;
 {
-    printf("Error tcp_ctl not supported");
+    fprintf(stderr, "Error tcp_ctl not supported");
     exit(-1);
+}
+
+typedef struct __attribute__((packed)) TcpcbExportData {
+    int16_t state;
+    int16_t timer[TCPT_NTIMERS];
+    int16_t rxtshift;
+    int16_t rxtcur;
+    int16_t dupacks;
+    u_int16_t maxseg;
+    char force;
+    u_int16_t flags;
+
+	u_int32_t	snd_una;
+	u_int32_t	snd_nxt;
+	u_int32_t	snd_up;
+	u_int32_t	snd_wl1;
+	u_int32_t	snd_wl2;
+	u_int32_t	iss;
+	u_int32_t snd_wnd;		
+
+	u_int32_t rcv_wnd;	
+	u_int32_t	rcv_nxt;	
+	u_int32_t	rcv_up;			
+	u_int32_t	irs;
+
+    u_int32_t	rcv_adv;	
+	u_int32_t	snd_max;
+
+	u_int32_t snd_cwnd;		
+	u_int32_t snd_ssthresh;
+
+    int16_t   idle;	       
+	int16_t	  rtt;
+	u_int32_t rtseq;
+	int16_t	  srtt;
+	int16_t	  rttvar;
+	u_int16_t rttmin;
+	u_int32_t max_sndwnd;
+
+	char	oobflags;
+	char	iobc;
+
+    u_int32_t	last_ack_sent;
+
+    //	int16_t	softerror; // always 0
+    // the current implementation of slirp doesn't support window scaling
+    // and these field are always zero
+    /* u_char	snd_scale;  
+	u_char	rcv_scale;
+	u_char	request_r_scale;
+	u_char	requested_s_scale; */
+
+    // the current implementation of slirp doesn't support timestamp
+    // and these field are always zero
+	/* u_int32_t	ts_recent;
+	  u_int32_t	ts_recent_age; */
+} TcpcbExportData;
+
+typedef struct __attribute__((packed)) TcpSocketExportData {
+    u_int32_t so_urgc;
+    u_int8_t faddr[4];
+    u_int8_t laddr[4];
+    u_int16_t fport;
+    u_int16_t lport;
+    u_int8_t  iptos;
+    u_char    type;
+    u_int32_t state;
+
+    int32_t syn_pack_offset; // assigned if the socket is during connections
+
+    int32_t rcv_buf_offset; 
+    int32_t snd_buf_offset;
+
+    TcpcbExportData tcpcb;
+    int32_t       reass_queue_offset; // offset to tcpSocketReassQueue
+    char data[0];
+} TcpSocketExportData;
+
+typedef struct __attribute__((packed)) TcpMbufExportData {
+    uint32_t size;
+    uint32_t mbuf_offset; // the tcpip header starts before the mbuf data
+    char data[0];
+} TcpMbufExportData;
+
+typedef struct __attribute__((packed)) SbufExportData {
+    uint32_t reserved;
+    uint32_t size;
+    char data[0]; 
+} SbufExportData; 
+
+typedef struct __attribute__((packed)) ReassQueueExportData {
+    uint32_t num_packets;
+    int32_t packets[0]; // array of offsets
+} ReassQueueExportData;
+
+#define EXPORT_NULL_OFFSET -1
+
+static inline uint32_t __get_tcpip_pckt_size(struct tcpiphdr *ti) 
+{
+    struct mbuf *m = dtom(ti);
+    return ((unsigned long)m->m_data - (unsigned long)ti + m->m_len);
+}
+
+static void __export_tcpip_pckt(struct tcpiphdr *ti, TcpMbufExportData *mbuf_data)
+{
+    struct mbuf *m = dtom(ti);
+    mbuf_data->size = __get_tcpip_pckt_size(ti);
+    mbuf_data->mbuf_offset = mbuf_data->size - m->m_len; 
+    memcpy(mbuf_data->data, ti, mbuf_data->size);
+}
+
+static inline struct tcpiphdr *__restore_tcpip_pckt(TcpMbufExportData *exp_mbuf) 
+{
+    struct mbuf *m = m_get(); 
+    struct tcpiphdr *ti;
+    if (!m ) {
+        return NULL;
+    }
+
+    if (M_FREEROOM(m) < (exp_mbuf->size + sizeof(struct qlink))) {
+        m_inc(m, exp_mbuf->size + sizeof(struct qlink));
+    }
+    m->m_data += sizeof(struct qlink);
+    m->m_len = exp_mbuf->size;
+
+    memcpy(m->m_data, exp_mbuf->data, exp_mbuf->size);
+    ti = mtod(m, struct tcpiphdr *);
+    ti->ti_mbuf = m;
+
+    m->m_data += exp_mbuf->mbuf_offset;
+    m->m_len  -= exp_mbuf->mbuf_offset;
+
+    return ti;
+}
+
+static inline void __export_sbuf(struct sbuf *sbuf, SbufExportData *exp_sbuf) 
+{
+    exp_sbuf->reserved = sbuf->sb_datalen;
+    exp_sbuf->size = sbuf->sb_cc;
+
+    sbcopy(sbuf, 0, sbuf->sb_cc, exp_sbuf->data);
+}
+
+static inline void __restore_sbuf(SbufExportData *exp_sbuf, struct sbuf *sbuf)
+{
+    sbreserve(sbuf, exp_sbuf->reserved);
+    memcpy(sbuf->sb_data, exp_sbuf->data, exp_sbuf->size);
+    sbuf->sb_cc = exp_sbuf->size;
+    sbuf->sb_rptr = sbuf->sb_data;
+
+    if (sbuf->sb_cc == sbuf->sb_datalen) {
+        sbuf->sb_wptr = sbuf->sb_data;
+    } else {
+        sbuf->sb_wptr = sbuf->sb_data + sbuf->sb_cc;
+    }
+
+   
+}
+
+// returns how many bytes were written to export_data->data
+static int __tcp_socket_export_socket_data(struct socket *so, TcpSocketExportData *export_data, 
+                                    int data_offset)
+{
+    char *data;
+    export_data->so_urgc = so->so_urgc;
+    memcpy(export_data->faddr, &so->so_faddr.s_addr, 4);
+    memcpy(export_data->laddr, &so->so_laddr.s_addr, 4);
+    export_data->fport = so->so_fport;
+    export_data->lport = so->so_lport;
+    export_data->iptos = so->so_iptos;
+    export_data->type = so->so_type;
+    export_data->state = so->so_state;
+
+    data  = export_data->data + data_offset;
+    if ((so->so_state & SS_ISFCONNECTING) && so->so_ti) {
+        __export_tcpip_pckt(so->so_ti, (TcpMbufExportData *)data);
+        export_data->syn_pack_offset = data - export_data->data;
+        data +=  (sizeof(TcpMbufExportData) + ((TcpMbufExportData *)data)->size);
+    } else {
+        export_data->syn_pack_offset = EXPORT_NULL_OFFSET;
+    }
+
+
+    if (so->so_rcv.sb_datalen) {
+        __export_sbuf(&so->so_rcv, (SbufExportData *)data);
+        export_data->rcv_buf_offset = data - export_data->data;
+        data += (sizeof(SbufExportData) + ((SbufExportData *)data)->size);
+    } else {
+        export_data->rcv_buf_offset = EXPORT_NULL_OFFSET;
+    }
+
+    if (so->so_snd.sb_datalen) {
+        __export_sbuf(&so->so_snd, (SbufExportData *)data);
+        export_data->snd_buf_offset = data - export_data->data;
+        data += (sizeof(SbufExportData) + ((SbufExportData *)data)->size);
+    } else {
+        export_data->rcv_buf_offset = EXPORT_NULL_OFFSET;
+    }
+
+    return (data - export_data->data + data_offset);
+}
+
+
+static struct socket* __tcp_socket_restore_socket_data(TcpSocketExportData *export_data) {
+    struct socket *so = NULL;
+ 
+    if ((so = socreate()) == NULL) {
+        fprintf(stderr, "failed: creating socket\n");
+        goto error;
+    }
+
+    // Creates the tcpcb and adds the socket to to the tcp sockets list.
+    // Also sets the link from the tcpcp to the socket and vice versa
+    if (tcp_attach(so) < 0) {
+        fprintf(stderr, "faild: attach socket\n");
+        goto error;
+    }
+    
+    so->so_urgc = export_data->so_urgc;
+    memcpy(&so->so_faddr.s_addr, export_data->faddr, 4);
+    memcpy(&so->so_laddr.s_addr, export_data->laddr, 4);
+    so->so_fport = export_data->fport;
+    so->so_lport = export_data->lport;
+    so->so_iptos = export_data->iptos;
+    so->so_type = export_data->type;
+    so->so_state = export_data->state;
+
+
+    if (export_data->syn_pack_offset != EXPORT_NULL_OFFSET) {
+        so->so_ti = __restore_tcpip_pckt((TcpMbufExportData *) (
+            export_data->data + export_data->syn_pack_offset));
+
+        if (!so->so_ti) {
+            fprintf(stderr, "failed: restoring syn packet\n");
+            goto error;
+        }
+        so->so_m = so->so_ti->ti_mbuf;
+    }
+
+    if (export_data->rcv_buf_offset != EXPORT_NULL_OFFSET) {
+        __restore_sbuf((SbufExportData *)(
+            export_data->data + export_data->rcv_buf_offset), &so->so_rcv);
+    }
+
+    if (export_data->snd_buf_offset != EXPORT_NULL_OFFSET) {
+        __restore_sbuf((SbufExportData *)(
+            export_data->data + export_data->snd_buf_offset), &so->so_snd);
+    }
+    return so;
+error:
+     if (so) {
+         if (so->so_m) {
+             m_free(so->so_m);
+         }
+         free(so);
+     }
+     return NULL;
+}
+
+static void __tcp_socket_export_tcpcb_data(struct tcpcb *tp, TcpcbExportData *export_data)
+{
+    int i;
+    export_data->state = tp->t_state;
+    for (i = 0; i < TCPT_NTIMERS; i++) {
+        export_data->timer[i] = tp->t_timer[i];
+    }
+    export_data->rxtshift = tp->t_rxtshift;
+    export_data->rxtcur = tp->t_rxtcur;
+    export_data->dupacks = tp->t_dupacks;
+    export_data->maxseg = tp->t_maxseg;
+    export_data->force = tp->t_force;
+    export_data->flags = tp->t_flags;
+
+    export_data->snd_una = tp->snd_una;
+    export_data->snd_nxt = tp->snd_nxt;
+    export_data->snd_up = tp->snd_up;
+    export_data->snd_wl1 = tp->snd_wl1;
+    export_data->snd_wl2 = tp->snd_wl2;
+    export_data->iss = tp->iss;
+    export_data->snd_wnd = tp->snd_wnd;
+    
+    export_data->rcv_wnd = tp->rcv_wnd;
+    export_data->rcv_nxt = tp->rcv_nxt;
+    export_data->rcv_up = tp->rcv_up;
+    export_data->irs = tp->irs;
+
+    export_data->rcv_adv = tp->rcv_adv;
+    export_data->snd_max = tp->snd_max;
+
+    export_data->snd_cwnd = tp->snd_cwnd;
+    export_data->snd_ssthresh = tp->snd_ssthresh;
+
+    export_data->idle = tp->t_idle;
+    export_data->rtt = tp->t_rtt;
+    export_data->rtseq = tp->t_rtseq;
+    export_data->srtt = tp->t_srtt;
+    export_data->rttvar = tp->t_rttvar;
+    export_data->rttmin = tp->t_rttmin;
+    export_data->max_sndwnd = tp->max_sndwnd;
+
+    export_data->oobflags = tp->t_oobflags;
+    export_data->iobc = tp->t_iobc;
+    
+    export_data->last_ack_sent = tp->last_ack_sent;
+}
+
+static void __tcp_socket_restore_tcpcb_data(TcpcbExportData *export_data, struct tcpcb *tp)
+{
+    int i;
+
+    tp->t_state = export_data->state;
+    for (i = 0; i < TCPT_NTIMERS; i++) {
+        tp->t_timer[i] = export_data->timer[i];
+    }
+    tp->t_rxtshift =  export_data->rxtshift; 
+    tp->t_rxtcur = export_data->rxtcur;
+    tp->t_dupacks = export_data->dupacks;
+    tp->t_maxseg = export_data->maxseg;
+    tp->t_force = export_data->force;
+    tp->t_flags = export_data->flags;
+
+    tp->snd_una = export_data->snd_una;
+    tp->snd_nxt = export_data->snd_nxt;
+    tp->snd_up = export_data->snd_up;
+    tp->snd_wl1 = export_data->snd_wl1;
+    tp->snd_wl2 = export_data->snd_wl2;
+    tp->iss = export_data->iss;
+    tp->snd_wnd = export_data->snd_wnd;
+
+    tp->rcv_wnd = export_data->rcv_wnd;
+    tp->rcv_nxt = export_data->rcv_nxt;
+    tp->rcv_up = export_data->rcv_up;
+    tp->irs = export_data->irs;
+
+    tp->rcv_adv = export_data->rcv_adv;
+    tp->snd_max = export_data->snd_max;
+
+    tp->snd_cwnd = export_data->snd_cwnd;
+    tp->snd_ssthresh = export_data->snd_ssthresh;
+
+
+    tp->t_idle = export_data->idle;
+    tp->t_rtt = export_data->rtt;
+    tp->t_rtseq = export_data->rtseq;
+    tp->t_srtt = export_data->srtt;
+    tp->t_rttvar = export_data->rttvar;
+    tp->t_rttmin = export_data->rttmin;
+    tp->max_sndwnd = export_data->max_sndwnd;
+
+    tp->t_oobflags = export_data->oobflags;
+    tp->t_iobc = export_data->iobc;
+    
+    tp->last_ack_sent = export_data->last_ack_sent;
+
+    tcp_template(tp);
+}
+
+// returns how many bytes were written to export_data->data
+static int __tcp_socket_export_reass_queue(struct tcpcb *tp, int queue_size, 
+                                    TcpSocketExportData *export_data, int data_offset)
+{
+    char *data = export_data->data + data_offset;
+    struct tcpiphdr *q;
+    ReassQueueExportData *queue_header;
+    int i;
+
+    if (!queue_size) {
+        export_data->reass_queue_offset = EXPORT_NULL_OFFSET;
+        return 0;
+    }
+    
+    export_data->reass_queue_offset = data_offset;
+    queue_header = (ReassQueueExportData *)data;
+    queue_header->num_packets = queue_size;
+
+    data = (char*)(queue_header + 1) + (sizeof(int32_t)*queue_size);
+
+    for (i =0, q = tcpfrag_list_first(tp); !tcpfrag_list_end(q, tp); q = tcpiphdr_next(q), i++) {
+        __export_tcpip_pckt(q, (TcpMbufExportData *)data);
+        queue_header->packets[i] = data - export_data->data;
+
+        data += (sizeof(TcpMbufExportData) + ((TcpMbufExportData *)data)->size);
+    }
+
+    return (data - export_data->data + data_offset);
+}
+
+static int __tcp_socket_restore_reass_queue(TcpSocketExportData *export_data, struct tcpcb *tp)
+{
+    ReassQueueExportData *queue_header;
+    int i;
+    if (export_data->reass_queue_offset == EXPORT_NULL_OFFSET) {
+        return TRUE;
+    }
+
+    queue_header = (ReassQueueExportData *)(export_data->data + export_data->reass_queue_offset);
+    for (i = 0; i < queue_header->num_packets; i++) {
+        struct tcpiphdr *ti = __restore_tcpip_pckt((TcpMbufExportData *) (
+            export_data->data + queue_header->packets[i]));
+
+        if (!ti) {
+            fprintf(stderr, "failed: restoring tcpip packet\n");
+            goto error;
+        }
+        insque(tcpiphdr2qlink(ti), tcpiphdr2qlink(tcpfrag_list_last(tp)));
+    }
+    
+    return TRUE;
+error:
+    while(!tcpfrag_list_empty(tp)) {
+        struct tcpiphdr *ti = tcpfrag_list_first(tp);     
+        remque(tcpiphdr2qlink(ti));
+        m_free(ti->ti_mbuf);
+    }
+
+    return FALSE;
+}
+
+uint64_t tcp_socket_export(struct socket *so, void **export_socket)
+{
+    uint64_t total_size = sizeof(TcpSocketExportData);
+    struct tcpcb *tp;
+    struct tcpiphdr *q;
+    int reass_queue_size = 0;
+    TcpSocketExportData *ret;
+    int data_offset = 0;
+
+    if ((so->so_state & SS_ISFCONNECTING) && so->so_ti) {
+        total_size += sizeof(TcpMbufExportData);
+        total_size += __get_tcpip_pckt_size(so->so_ti);
+    }
+
+    if (so->so_rcv.sb_datalen) {
+        total_size += sizeof(SbufExportData);
+        total_size += so->so_rcv.sb_cc;
+    }
+
+    if (so->so_snd.sb_datalen) {
+        total_size += sizeof(SbufExportData);
+        total_size += so->so_snd.sb_cc;
+    }
+
+    tp = sototcpcb(so);
+
+    for (q = tcpfrag_list_first(tp); !tcpfrag_list_end(q, tp);
+        q = tcpiphdr_next(q)) {
+        reass_queue_size++;
+        total_size += sizeof(TcpMbufExportData);
+        total_size += __get_tcpip_pckt_size(q);
+    }
+
+    if (reass_queue_size) {
+        total_size += sizeof(ReassQueueExportData);
+        total_size += reass_queue_size*sizeof(int32_t);
+    }
+
+    ret = (TcpSocketExportData *)malloc(total_size);
+    
+    data_offset += __tcp_socket_export_socket_data(so, ret, data_offset);
+    __tcp_socket_export_tcpcb_data(tp, &ret->tcpcb);
+    data_offset += __tcp_socket_export_reass_queue(tp, reass_queue_size, ret, data_offset);
+    *export_socket = ret;
+    return total_size;
+}
+
+struct socket *tcp_socket_restore(void *export_so, UserSocket *usr_so)
+{
+    TcpSocketExportData *export_data = (TcpSocketExportData *)export_so;
+    struct socket *so = __tcp_socket_restore_socket_data(export_data);
+
+    if (!so) {
+        return NULL;
+    }
+
+    __tcp_socket_restore_tcpcb_data(&export_data->tcpcb, sototcpcb(so));
+    
+    if (!__tcp_socket_restore_reass_queue(export_data, sototcpcb(so))) {
+        // usr_so is still null, so tcp_close will only free resources
+        tcp_close(sototcpcb(so));
+        return NULL;
+    }
+    so->usr_so = usr_so;
+    return so;
 }

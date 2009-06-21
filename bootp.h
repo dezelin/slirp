@@ -123,4 +123,7 @@ int alloc_virtual_ip(struct in_addr *out_addr);
 int is_virtual_ip_allocated(struct in_addr *addr); 
 void clear_virtual_ips();
 
+uint64_t bootp_export(void **export_data);
+void bootp_restore(void *export_data);
+
 #endif

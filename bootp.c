@@ -28,21 +28,20 @@
 
 /* XXX: only DHCP is supported */
 
-#define NB_ADDR 16 // TODO: we don't need more than 1
+#define NB_ADDR 16 
 
 #define START_ADDR 15
 #define START_VIRTAUL_ADDR (NB_ADDR + START_ADDR)
 
 #define LEASE_TIME (24 * 3600)
 
-typedef struct {
-    uint8_t allocated;
+typedef struct __attribute__((packed)) {
     uint8_t macaddr[6];
 } BOOTPClient;
 
 static BOOTPClient bootp_clients[NB_ADDR];
-
-static int virtual_ips_count = 0;
+static int num_bootp_clients = 0;
+static int num_virtual_ips = 0;
 
 const char *bootp_filename;
 
@@ -58,61 +57,58 @@ if (slirp_debug & DBG_CALL) { fprintf(dfd, fmt, ## args); fflush(dfd); }
 static BOOTPClient *get_new_addr(struct in_addr *paddr)
 {
     BOOTPClient *bc;
-    int i;
 
-    for(i = 0; i < NB_ADDR; i++) {
-        if (!bootp_clients[i].allocated)
-            goto found;
+    if (num_bootp_clients == NB_ADDR) {
+        return NULL;
     }
-    return NULL;
- found:
-    bc = &bootp_clients[i];
-    bc->allocated = 1;
-    paddr->s_addr = htonl(ntohl(special_addr.s_addr) | (i + START_ADDR));
+
+    bc = &bootp_clients[num_bootp_clients];
+    paddr->s_addr = htonl(ntohl(special_addr.s_addr) | (num_bootp_clients + START_ADDR));
+    num_bootp_clients++;
     return bc;
 }
-
-int alloc_virtual_ip(struct in_addr *out_addr)
-{
-    if ((virtual_ips_count + START_VIRTAUL_ADDR) > 0xff)
-        return FALSE;
-    out_addr->s_addr = htonl(ntohl(special_addr.s_addr) | (virtual_ips_count + START_VIRTAUL_ADDR));
-    virtual_ips_count++;
-    return TRUE;
-}
-
-void clear_virtual_ips()
-{
-    virtual_ips_count = 0;
-}
-
-int is_virtual_ip_allocated(struct in_addr *addr)
-{
-    if ((addr->s_addr&htonl(0xffffff00)) == special_addr.s_addr) {
-        int lastbyte=(ntohl(addr->s_addr)) & 0xff;
-        return (((lastbyte >= START_VIRTAUL_ADDR) && 
-            (lastbyte < virtual_ips_count + START_VIRTAUL_ADDR)) ||(lastbyte == CTL_ALIAS) );
-    }
-    return FALSE;
-}
-
 
 static BOOTPClient *find_addr(struct in_addr *paddr, const uint8_t *macaddr)
 {
     BOOTPClient *bc;
     int i;
 
-    for(i = 0; i < NB_ADDR; i++) {
+    for(i = 0; i < num_bootp_clients; i++) {
         if (!memcmp(macaddr, bootp_clients[i].macaddr, 6))
             goto found;
     }
     return NULL;
  found:
     bc = &bootp_clients[i];
-    bc->allocated = 1;
     paddr->s_addr = htonl(ntohl(special_addr.s_addr) | (i + START_ADDR));
     return bc;
 }
+
+int alloc_virtual_ip(struct in_addr *out_addr)
+{
+    if ((num_virtual_ips + START_VIRTAUL_ADDR) > 0xff)
+        return FALSE;
+    out_addr->s_addr = htonl(ntohl(special_addr.s_addr) | (num_virtual_ips + START_VIRTAUL_ADDR));
+    num_virtual_ips++;
+    return TRUE;
+}
+
+void clear_virtual_ips()
+{
+    num_virtual_ips = 0;
+}
+
+int is_virtual_ip_allocated(struct in_addr *addr)
+{
+    printf("is_virtual_ip_allocated addr=%s special=%s", inet_ntoa(*addr), inet_ntoa(special_addr));
+    if ((addr->s_addr&htonl(0xffffff00)) == special_addr.s_addr) {
+        int lastbyte=(ntohl(addr->s_addr)) & 0xff;
+        return (((lastbyte >= START_VIRTAUL_ADDR) && 
+            (lastbyte < num_virtual_ips + START_VIRTAUL_ADDR)) ||(lastbyte == CTL_ALIAS) );
+    }
+    return FALSE;
+}
+
 
 static void dhcp_decode(const uint8_t *buf, int size,
                         int *pmsg_type)
@@ -268,10 +264,8 @@ static void bootp_reply(struct bootp_t *bp)
             *q++ = 0xff;
             *q++ = 0xff;
             *q++ = 0x00;
-
- // TODO: removed gateway. Return it to be optional      
-#if 0 
-            if (!slirp_restrict) {
+     
+            if (!slirp_restricted) {
                 *q++ = RFC1533_GATEWAY;
                 *q++ = 4;
                 memcpy(q, &saddr.sin_addr, 4);
@@ -283,7 +277,6 @@ static void bootp_reply(struct bootp_t *bp)
                 memcpy(q, &dns_addr, 4);
                 q += 4;
               }
-#endif
 
             *q++ = RFC2132_LEASE_TIME;
             *q++ = 4;
@@ -311,8 +304,45 @@ static void bootp_reply(struct bootp_t *bp)
 void bootp_input(struct mbuf *m)
 {
     struct bootp_t *bp = mtod(m, struct bootp_t *);
-
+    
     if (bp->bp_op == BOOTP_REQUEST) {
         bootp_reply(bp);
+    }
+}
+
+typedef struct __attribute__((packed)) BootpExportData {
+    uint32_t num_virtual_ips;
+    uint32_t num_bootp_clients;
+    BOOTPClient  clients[0]; // ptr to the start of the mcadder of the bootp client
+} BootpExportData;
+
+uint64_t bootp_export(void **export_data)
+{
+    int i;
+    uint64_t size = sizeof(BootpExportData) + (sizeof(BOOTPClient)*num_bootp_clients);
+    BootpExportData *ret_data =  malloc(size);
+
+    ret_data->num_virtual_ips = num_virtual_ips;
+    ret_data->num_bootp_clients = num_bootp_clients;
+
+    for (i = 0; i < ret_data->num_bootp_clients ; i++) {
+        memcpy(ret_data->clients[i].macaddr, bootp_clients[i].macaddr, 6);
+    }
+
+    *export_data = ret_data;
+    return size;
+}
+
+void bootp_restore(void *export_data)
+{
+    int i;
+    BootpExportData *bootp_data = (BootpExportData *)export_data;
+
+    num_virtual_ips = bootp_data->num_virtual_ips;
+    num_bootp_clients = bootp_data->num_bootp_clients;
+
+    for (i = 0; i < num_bootp_clients; i++)
+    {
+        memcpy(bootp_clients[i].macaddr, bootp_data->clients[i].macaddr, 6);
     }
 }

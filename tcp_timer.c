@@ -42,8 +42,6 @@
 struct   tcpstat tcpstat;        /* tcp statistics */
 #endif
 
-u_int32_t        tcp_now;                /* for RFC 1323 timestamps */
-
 static struct tcpcb *tcp_timers(register struct tcpcb *tp, int timer);
 
 /*
@@ -112,7 +110,6 @@ tpgone:
 	if ((int)tcp_iss < 0)
 		tcp_iss = 0;				/* XXX */
 #endif
-	tcp_now++;					/* for timestamps */
 }
 
 /*

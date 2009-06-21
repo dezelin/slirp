@@ -229,6 +229,4 @@ struct tcpstat {
 extern struct	tcpstat tcpstat;	/* tcp statistics */
 #endif
 
-extern u_int32_t	tcp_now;		/* for RFC 1323 timestamps */
-
 #endif

@@ -407,24 +407,15 @@ sowrite(so)
 	return nn;
 }
 
-void sotrysend (struct socket *so)
+int socansend(struct socket *so) 
 {
-    if (so->so_state & SS_NOFDREF)
-        return;
-
-    if (CONN_CANFSEND(so) && so->so_rcv.sb_cc) {
-        sowrite(so);
-    }
+    return (!(so->so_state & SS_NOFDREF) && CONN_CANFSEND(so) && so->so_rcv.sb_cc);
 }
-int sotryrecv(struct socket *so)
+
+int socanrecv(struct socket *so) 
 {
-    int ret = 0;
-    if (so->so_state & SS_NOFDREF)
-        return 0;
-    if (CONN_CANFRCV(so) && (so->so_snd.sb_cc < (so->so_snd.sb_datalen/2))) {
-        ret = soread(so);
-    }
-    return ret;
+    return (!(so->so_state & SS_NOFDREF) && CONN_CANFRCV(so) && 
+        (so->so_snd.sb_cc < (so->so_snd.sb_datalen/2)));
 }
 
 void sodropacked (struct socket *so, int acked)
@@ -432,7 +423,6 @@ void sodropacked (struct socket *so, int acked)
     sbdrop(&so->so_snd, acked);
 }
  
-
 #if 0 // UDP and socket listen
 int soreadbuf(struct socket *so, const char *buf, int size)
 {
@@ -872,3 +862,5 @@ sosbappend(so, m)
 	/* Whatever happened, we free the mbuf */
 	m_free(m);
 }
+
+

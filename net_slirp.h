@@ -29,7 +29,8 @@ struct SlirpUsrNetworkInterface {
     void       (*arm_timer)(SlirpUsrNetworkInterface *usr_interface, UserTimer *timer, uint32_t ms);
 };
 
-void net_slirp_init(struct in_addr special_ip, SlirpUsrNetworkInterface *net_interface);
+void net_slirp_init(struct in_addr special_ip, int restricted, 
+                    SlirpUsrNetworkInterface *net_interface);
 void net_slirp_input(const uint8_t *pkt, int pkt_len);
 
 // TODO: maybe we will need to change the allocation/deallocation to be for specific
@@ -43,6 +44,21 @@ void net_slirp_socket_connect_failed_notify(SlirpSocket *sckt);
 void net_slirp_socket_can_send_notify(SlirpSocket *sckt); 
 void net_slirp_socket_can_receive_notify(SlirpSocket *sckt); 
 void net_slirp_socket_abort(SlirpSocket *sckt);
+
+/*
+    When exporting slirp, the following steps should be performed in the same order:
+    (1) net_slirp_freeze (2) net_slirp_state_export (3) for each tcp socket: net_slirp_tcp_socket_export
+    When restoring slirp: (1) net_slirp_state_restore (2) net_slirp_tcp_socket_restore (3) net_slirp_unfreeze
+*/
+
+uint64_t net_slirp_state_export(void **export_state);
+void net_slirp_state_restore(void *export_state); 
+
+uint64_t net_slirp_tcp_socket_export(SlirpSocket *sckt, void **export_socket);
+SlirpSocket *net_slirp_tcp_socket_restore(void *export_socket, UserSocket *usr_socket);
+
+void net_slirp_freeze();   // deactivate timers
+void net_slirp_unfreeze(); // restore timers
 
 #if 0
 

@@ -67,6 +67,7 @@ struct tcpiphdr {
 #define tcpiphdr_next(T) qlink2tcpiphdr(tcpiphdr2qlink(T)->next)
 #define tcpiphdr_prev(T) qlink2tcpiphdr(tcpiphdr2qlink(T)->prev)
 #define tcpfrag_list_first(T) qlink2tcpiphdr((T)->seg_next)
+#define tcpfrag_list_last(T) qlink2tcpiphdr((T)->seg_prev)
 #define tcpfrag_list_end(F, T) (tcpiphdr2qlink(F) == (struct qlink*)(T))
 #define tcpfrag_list_empty(T) ((T)->seg_next == (struct tcpiphdr*)(T))
 
