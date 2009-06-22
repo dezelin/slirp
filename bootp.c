@@ -100,7 +100,6 @@ void clear_virtual_ips()
 
 int is_virtual_ip_allocated(struct in_addr *addr)
 {
-    printf("is_virtual_ip_allocated addr=%s special=%s", inet_ntoa(*addr), inet_ntoa(special_addr));
     if ((addr->s_addr&htonl(0xffffff00)) == special_addr.s_addr) {
         int lastbyte=(ntohl(addr->s_addr)) & 0xff;
         return (((lastbyte >= START_VIRTAUL_ADDR) && 
