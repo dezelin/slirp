@@ -223,6 +223,11 @@ void DLL_PUBLIC net_slirp_init(struct in_addr special_ip, int restricted,
 
 }
 
+void DLL_PUBLIC net_slirp_set_net_interface(SlirpUsrNetworkInterface *net_interface)
+{
+    slirp_net_interface = net_interface;
+}
+
 void DLL_PUBLIC net_slirp_input(const uint8_t *pkt, int pkt_len)
 {
     struct mbuf *m;

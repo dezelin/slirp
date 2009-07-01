@@ -31,6 +31,7 @@ struct SlirpUsrNetworkInterface {
 
 void net_slirp_init(struct in_addr special_ip, int restricted, 
                     SlirpUsrNetworkInterface *net_interface);
+void net_slirp_set_net_interface(SlirpUsrNetworkInterface *net_interface);
 void net_slirp_input(const uint8_t *pkt, int pkt_len);
 
 // TODO: maybe we will need to change the allocation/deallocation to be for specific
