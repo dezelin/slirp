@@ -176,6 +176,15 @@ again:
 
 	win = sbspace(&so->so_rcv);
 
+    /* a hook for the case that tp->rcv_nxt > tp->rcv_adv. It can happen 
+       when 1) there is more space in so_rcv than in the window last advertised and 
+       2) we received more data than the the size of the window last advertised. 
+       For example: it happens when we receive zero window probes of len=1 and a space
+       in so_rcv is available */
+    if (SEQ_LT(tp->rcv_adv, tp->rcv_nxt)) { 
+        tp->rcv_adv = tp->rcv_nxt;
+    }
+
 	/*
 	 * Sender silly window avoidance.  If connection is idle
 	 * and can send all data, a maximum segment,
@@ -214,7 +223,7 @@ again:
 		 * TCP_MAXWIN << tp->rcv_scale.
 		 */
 		long adv = min(win, (long)TCP_MAXWIN << tp->rcv_scale) -
-			(tp->rcv_adv - tp->rcv_nxt);
+			(tp->rcv_adv - tp->rcv_nxt); 
 
 		if (adv >= (long) (2 * tp->t_maxseg))
 			goto send;

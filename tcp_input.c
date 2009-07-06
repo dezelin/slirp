@@ -646,6 +646,15 @@ findso:
           win = sbspace(&so->so_rcv);
 	  if (win < 0)
 	    win = 0;
+
+        /* a hook for the case that tp->rcv_nxt > tp->rcv_adv. It can happen 
+           when 1) there is more space in so_rcv than in the window last advertised and 
+           2) we received more data than the the size of the window last advertised. 
+           For example: it happens when we receive zero window probes of len=1 and a space
+           in so_rcv is available */
+        if (SEQ_LT(tp->rcv_adv, tp->rcv_nxt)) {
+            tp->rcv_adv = tp->rcv_nxt;
+        }
 	  tp->rcv_wnd = max(win, (int)(tp->rcv_adv - tp->rcv_nxt));
 	}
 
