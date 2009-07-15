@@ -1,6 +1,6 @@
 CC = gcc
 
-CFLAGS = -fvisibility=hidden -fPIC -DPIC -Wall -Wno-sign-compare -Werror
+CFLAGS = -fvisibility=hidden -fPIC -DPIC -Wall -Wno-sign-compare -Werror -fno-strict-overflow
 LDFLAGS = -fPIC
 TARGET = RELEASE
 
