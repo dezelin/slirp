@@ -81,6 +81,7 @@ $(TARGETNAME):
 -include $(patsubst %.c, $(TARGETNAME)/.%.dep, $(SRCS))
 
 install:
+	mkdir -p $(INCLUDEDIR)
 	cp $(LIBNAME) $(LIBDIR)
 	cp $(HEADERNAME) $(INCLUDEDIR)
 	cp $(PCNAME) $(PKGCONFIGDIR)
