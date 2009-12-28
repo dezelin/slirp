@@ -81,11 +81,11 @@ $(TARGETNAME):
 -include $(patsubst %.c, $(TARGETNAME)/.%.dep, $(SRCS))
 
 install:
-	mkdir -p $(INCLUDEDIR)
-	cp $(LIBNAME) $(LIBDIR)
-	cp $(HEADERNAME) $(INCLUDEDIR)
-	cp $(PCNAME) $(PKGCONFIGDIR)
+	mkdir -p $(DESTDIR)/$(INCLUDEDIR)
+	cp $(LIBNAME) $(DESTDIR)/$(LIBDIR)
+	cp $(HEADERNAME) $(DESTDIR)/$(INCLUDEDIR)
+	cp $(PCNAME) $(DESTDIR)/$(PKGCONFIGDIR)
 uninstall:
-	rm -f  $(LIBDIR)/$(LIBNAME)
-	rm -f $(INCLUDEDIR)/$(HEADERNAME)
-	rm -f $(PKGCONFIGDIR)/$(PCNAME)
+	rm -f $(DESTDIR)/$(LIBDIR)/$(LIBNAME)
+	rm -f $(DESTDIR)/$(INCLUDEDIR)/$(HEADERNAME)
+	rm -f $(DESTDIR)/$(PKGCONFIGDIR)/$(PCNAME)
