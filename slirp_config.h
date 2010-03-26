@@ -54,12 +54,6 @@
 /* Ignore this */
 #undef DUMMY_PPP
 
-/* Define if you have unistd.h */
-#define HAVE_UNISTD_H
-
-/* Define if you have stdlib.h */
-#define HAVE_STDLIB_H
-
 /* Define if you have sys/ioctl.h */
 #undef HAVE_SYS_IOCTL_H
 #ifndef _WIN32
@@ -111,9 +105,6 @@
 #ifndef _WIN32
 #define HAVE_SYS_SELECT_H
 #endif
-
-/* Define if you have strings.h */
-#define HAVE_STRING_H
 
 /* Define if you have arpa/inet.h */
 #undef HAVE_ARPA_INET_H

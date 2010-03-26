@@ -13,6 +13,7 @@
 #define STAT(expr) do { } while(0)
 #endif
 
+#include "config.h"
 #include "slirp_config.h"
 
 #ifdef _WIN32
