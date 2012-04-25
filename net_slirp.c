@@ -131,7 +131,7 @@ static int get_dns_addr(struct in_addr *pdns_addr)
 /*
  * Get our IP address and put it in our_addr
  */
-static void getouraddr()
+static void getouraddr(void)
 {
 	char buff[256];
 	struct hostent *he = NULL;
@@ -144,13 +144,13 @@ static void getouraddr()
             our_addr.s_addr = loopback_addr.s_addr;
 }
 
-static int need_fast_timer() 
+static int need_fast_timer(void) 
 {
     // the timer will check if realy needed (if there is pending delayed ack)
     return (if_queued || (tcb.so_next != &tcb));
 }
 
-static int need_slow_timer() 
+static int need_slow_timer(void) 
 {
     return ((tcb.so_next != &tcb) || (&ipq.ip_link != ipq.ip_link.next));
 }
@@ -320,7 +320,7 @@ int DLL_PUBLIC net_slirp_allocate_virtual_ip(struct in_addr *addr)
     return alloc_virtual_ip(addr); // bootp
 }
 
-void DLL_PUBLIC net_slirp_clear_virtual_ips()
+void DLL_PUBLIC net_slirp_clear_virtual_ips(void)
 {
     clear_virtual_ips();
 }
@@ -381,13 +381,13 @@ SlirpSocket DLL_PUBLIC *net_slirp_tcp_socket_restore(void *export_socket, UserSo
 }
 
 
-void DLL_PUBLIC net_slirp_freeze()
+void DLL_PUBLIC net_slirp_freeze(void)
 {
     slirp_freezed = TRUE;
 }
 
 
-void DLL_PUBLIC net_slirp_unfreeze()
+void DLL_PUBLIC net_slirp_unfreeze(void)
 {
     slirp_freezed = FALSE;
     if (!slow_timer_armed && need_slow_timer()) {

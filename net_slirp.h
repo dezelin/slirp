@@ -38,7 +38,7 @@ void net_slirp_input(const uint8_t *pkt, int pkt_len);
 // ips (because of problems when client/server restart or client changes network, and
 // services were already installed). Maybe the netwrok mask should be extended too.
 int net_slirp_allocate_virtual_ip(struct in_addr *addr); 
-void net_slirp_clear_virtual_ips();
+void net_slirp_clear_virtual_ips(void);
 
 void net_slirp_socket_connected_notify(SlirpSocket *sckt);
 void net_slirp_socket_connect_failed_notify(SlirpSocket *sckt);
@@ -58,8 +58,8 @@ void net_slirp_state_restore(void *export_state);
 uint64_t net_slirp_tcp_socket_export(SlirpSocket *sckt, void **export_socket);
 SlirpSocket *net_slirp_tcp_socket_restore(void *export_socket, UserSocket *usr_socket);
 
-void net_slirp_freeze();   // deactivate timers
-void net_slirp_unfreeze(); // restore timers
+void net_slirp_freeze(void);   // deactivate timers
+void net_slirp_unfreeze(void); // restore timers
 
 #if 0
 
